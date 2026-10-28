@@ -1,45 +1,103 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { format, isBefore, startOfDay, parseISO } from 'date-fns';
-import { supabase } from '../lib/supabase';
-import type { Profile, Task, TaskFrequency, TaskStatus } from '../lib/types';
+import { format, parseISO } from 'date-fns';
+import { supabase } from './supabase';
+import type { Profile, ResourceLink, Task, TaskFrequency } from './types';
+import {
+  computeNextDueDate,
+  effectiveDeadline,
+  effectiveStatus,
+  toDateKey,
+} from './recurrence';
+
+/** Deadline used for sorting/roll-forward when a task has no explicit dates. */
+function baseDeadline(t: Task): string | null {
+  return t.next_due_date ?? t.due_date;
+}
+
+function sortTasks(list: Task[]): Task[] {
+  return [...list].sort((a, b) => {
+    const ea = effectiveStatus(a);
+    const eb = effectiveStatus(b);
+    // Overdue first, then nearest deadline, then newest created.
+    if (ea !== eb) {
+      if (ea === 'overdue') return -1;
+      if (eb === 'overdue') return 1;
+    }
+    const da = baseDeadline(a) ?? '9999';
+    const db = baseDeadline(b) ?? '9999';
+    const cmp = String(da).localeCompare(String(db));
+    if (cmp !== 0) return cmp;
+    return String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+  });
+}
 
 export function useTasks(profile: Profile | null) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const profilesMapRef = useRef<Map<string, Profile>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const tasksRef = useRef<Task[]>([]);
+  tasksRef.current = tasks;
+
+  /**
+   * Recurrence engine: roll every open recurring task forward so its live
+   * deadline is always the next upcoming occurrence. Persisted once per day
+   * per task (cheap UPDATEs, guarded by last_occurrence_date).
+   */
+  const rollForward = useCallback(async (fresh: Task[]) => {
+    const now = new Date();
+    const updates: { id: string; patch: Partial<Task> }[] = [];
+    for (const t of fresh) {
+      if (t.status === 'completed' || t.frequency === 'one-time') continue;
+      const dl = effectiveDeadline(t);
+      if (!dl) continue;
+      if (new Date(dl).getTime() >= now.getTime()) continue;
+      const next = computeNextDueDate(t, now);
+      if (!next) continue;
+      updates.push({
+        id: t.id,
+        patch: {
+          next_due_date: next.toISOString(),
+          last_occurrence_date: toDateKey(next),
+          occurrence_count: (t.occurrence_count ?? 0) + 1,
+          updated_at: now.toISOString(),
+        },
+      });
+    }
+    if (updates.length === 0) return fresh;
+    await Promise.all(
+      updates.map((u) => supabase.from('tasks').update(u.patch).eq('id', u.id)),
+    );
+    return fresh.map((t) => {
+      const u = updates.find((x) => x.id === t.id);
+      return u ? ({ ...t, ...u.patch } as Task) : t;
+    });
+  }, []);
 
   const fetchData = useCallback(async () => {
-    if (!profile) return;
     setLoading(true);
     setError(null);
 
     const [tasksRes, profilesRes] = await Promise.all([
-      supabase
-        .from('tasks')
-        .select('*')
-        .order('due_date', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false }),
+      supabase.from('tasks').select('*'),
       supabase.from('profiles').select('*').order('full_name'),
     ]);
 
     if (tasksRes.error) {
       setError(tasksRes.error.message);
+      setTasks([]);
     } else {
-      setTasks((tasksRes.data ?? []) as Task[]);
+      const raw = (tasksRes.data ?? []) as Task[];
+      const rolled = await rollForward(raw);
+      setTasks(sortTasks(rolled));
     }
 
     if (!profilesRes.error) {
-      const list = (profilesRes.data ?? []) as Profile[];
-      setProfiles(list);
-      const map = new Map<string, Profile>();
-      list.forEach((p) => map.set(p.id, p));
-      profilesMapRef.current = map;
+      setProfiles((profilesRes.data ?? []) as Profile[]);
     }
 
     setLoading(false);
-  }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rollForward]);
 
   useEffect(() => {
     fetchData();
@@ -51,29 +109,30 @@ export function useTasks(profile: Profile | null) {
     return map;
   }, [profiles]);
 
-  /** Tasks visible to the current user under RLS. */
   const visibleTasks = tasks;
 
-  /** Tasks assigned to the current user. */
+  /** Tasks where the current user is one of the assignees. */
   const myTasks = useMemo(
-    () => tasks.filter((t) => t.assigned_to === profile?.id),
+    () =>
+      profile
+        ? tasks.filter((t) => (t.assignee_ids ?? []).includes(profile.id))
+        : [],
     [tasks, profile],
   );
 
   const stats = useMemo(() => {
-    const today = startOfDay(new Date());
-    const count = (list: Task[]) => ({
-      total: list.length,
-      pending: list.filter((t) => t.status === 'pending').length,
-      inProgress: list.filter((t) => t.status === 'in-progress').length,
-      completed: list.filter((t) => t.status === 'completed').length,
-      overdue: list.filter(
-        (t) =>
-          t.status !== 'completed' &&
-          t.due_date &&
-          isBefore(parseISO(t.due_date), today),
-      ).length,
-    });
+    const count = (list: Task[]) => {
+      let pending = 0;
+      let completed = 0;
+      let overdue = 0;
+      list.forEach((t) => {
+        const s = effectiveStatus(t);
+        if (s === 'completed') completed++;
+        else if (s === 'overdue') overdue++;
+        else pending++;
+      });
+      return { total: list.length, pending, completed, overdue };
+    };
     return { mine: count(myTasks), all: count(visibleTasks) };
   }, [myTasks, visibleTasks]);
 
@@ -84,16 +143,31 @@ export function useTasks(profile: Profile | null) {
     description?: string;
     due_date?: string | null;
     frequency?: TaskFrequency;
-    assigned_to: string;
+    weekdays?: number[] | null;
+    assignee_ids: string[];
+    category_id?: string | null;
+    links?: ResourceLink[];
   }) => {
+    const dueIso = input.due_date ? new Date(input.due_date).toISOString() : null;
+    const frequency = input.frequency ?? 'one-time';
+    const weekdays =
+      frequency === 'daily' && input.weekdays && input.weekdays.length > 0
+        ? [...input.weekdays].sort((a, b) => a - b)
+        : null;
     const row = {
       title: input.title.trim(),
       description: input.description?.trim() || null,
-      due_date: input.due_date ? new Date(input.due_date).toISOString() : null,
-      frequency: input.frequency ?? 'one-time',
-      status: 'pending' as TaskStatus,
-      assigned_to: input.assigned_to,
+      due_date: dueIso,
+      next_due_date: dueIso,
+      last_occurrence_date: dueIso ? toDateKey(new Date(dueIso)) : null,
+      frequency,
+      weekdays,
+      status: 'pending',
+      assignee_ids: input.assignee_ids,
       assigned_by: profile?.id ?? null,
+      category_id: input.category_id ?? null,
+      links: (input.links ?? []).filter((l) => l.url.trim()),
+      occurrence_count: 1,
     };
     const { data, error: err } = await supabase
       .from('tasks')
@@ -101,21 +175,11 @@ export function useTasks(profile: Profile | null) {
       .select()
       .single();
     if (err) return { error: err.message };
-    const withAssignee = {
-      ...(data as Task),
-      assignee: (() => {
-        const p = profilesMapRef.current.get((data as Task).assigned_to);
-        return p ? { full_name: p.full_name, position: p.position, role: p.role } : null;
-      })(),
-    };
-    setTasks((prev) =>
-      [withAssignee, ...prev].sort((a, b) =>
-        (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999'),
-      ),
-    );
-    return { data: withAssignee };
+    setTasks((prev) => sortTasks([data as Task, ...prev]));
+    return { data };
   };
 
+  /** Admin/global edit — repository maintenance. */
   const updateTask = async (id: string, patch: Partial<Task>) => {
     const { data, error: err } = await supabase
       .from('tasks')
@@ -124,7 +188,7 @@ export function useTasks(profile: Profile | null) {
       .select()
       .single();
     if (err) return { error: err.message };
-    setTasks((prev) => prev.map((t) => (t.id === id ? (data as Task) : t)));
+    setTasks((prev) => sortTasks(prev.map((t) => (t.id === id ? (data as Task) : t))));
     return { data };
   };
 
@@ -133,6 +197,58 @@ export function useTasks(profile: Profile | null) {
     if (err) return { error: err.message };
     setTasks((prev) => prev.filter((t) => t.id !== id));
     return {};
+  };
+
+  /**
+   * Assigned users complete the CURRENT occurrence. Recurring tasks roll to
+   * their next occurrence and go back to Pending; one-time tasks stay Completed.
+   */
+  const completeTaskOccurrence = async (task: Task, notes: string) => {
+    const now = new Date();
+    const patch: Record<string, unknown> = {
+      status: 'pending',
+      completion_notes: notes.trim() || null,
+      completed_by: profile?.id ?? null,
+      acknowledged_completion: true,
+      completed_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+    if (task.frequency !== 'one-time') {
+      const next = computeNextDueDate(task, now);
+      if (next) {
+        patch.next_due_date = next.toISOString();
+        patch.last_occurrence_date = toDateKey(next);
+        patch.occurrence_count = (task.occurrence_count ?? 0) + 1;
+      }
+    }
+    const { data, error: err } = await supabase
+      .from('tasks')
+      .update(patch)
+      .eq('id', task.id)
+      .select()
+      .single();
+    if (err) return { error: err.message };
+    setTasks((prev) => sortTasks(prev.map((t) => (t.id === task.id ? (data as Task) : t))));
+    return { data };
+  };
+
+  /** Reopen a completed one-time task (assigned user or admin). */
+  const reopenTask = async (task: Task) => {
+    const { data, error: err } = await supabase
+      .from('tasks')
+      .update({
+        status: 'pending',
+        completed_at: null,
+        completed_by: null,
+        acknowledged_completion: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', task.id)
+      .select()
+      .single();
+    if (err) return { error: err.message };
+    setTasks((prev) => sortTasks(prev.map((t) => (t.id === task.id ? (data as Task) : t))));
+    return { data };
   };
 
   return {
@@ -147,6 +263,8 @@ export function useTasks(profile: Profile | null) {
     createTask,
     updateTask,
     deleteTask,
+    completeTaskOccurrence,
+    reopenTask,
   };
 }
 
@@ -158,3 +276,5 @@ export function formatDueDate(due: string | null): string {
     return due;
   }
 }
+
+export { effectiveStatus, effectiveDeadline };
