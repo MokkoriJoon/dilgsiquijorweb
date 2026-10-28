@@ -81,6 +81,13 @@ export interface Task {
   assigned_to: string;
   assigned_by: string | null;
   category_id: string | null;
+  /**
+   * Personal task flag — tasks created by a user for THEMSELVES (e.g. a
+   * STANDARD user from the "Personal Tasks" section of My Tasks).
+   * Personal tasks are only visible to their owner and are NEVER counted in
+   * the organization-wide totals (public board, dashboards, statistics).
+   */
+  is_personal?: boolean;
   created_at?: string;
   updated_at?: string;
   completed_at?: string | null;

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, BellRing, CheckCheck, Trash2, X, AlertTriangle, Clock, UserPlus } from 'lucide-react';
+import { Bell, CheckCheck, Trash2, X, AlertTriangle, Clock, UserPlus } from 'lucide-react';
 import type { AppNotification, NotifKind } from '../lib/notifications';
-import { useNotifPermission } from '../lib/notifications';
 
 const KIND_STYLE: Record<NotifKind, { icon: typeof Bell; ring: string; bg: string; fg: string }> = {
   overdue: { icon: AlertTriangle, ring: 'ring-red-300', bg: 'bg-red-50', fg: 'text-red-600' },
@@ -11,26 +10,32 @@ const KIND_STYLE: Record<NotifKind, { icon: typeof Bell; ring: string; bg: strin
 };
 
 /**
- * Free in-app notification centre (bell + dropdown) with optional browser
- * push notifications. No paid service — uses the native Notification API.
+ * Free in-app notification centre (bell + dropdown).
+ * The unread badge counts ONLY notifications that are still new — once an
+ * item is clicked or "Mark all read" is used it never counts again.
  */
 export default function NotificationBell({
   notifications,
   unreadCount,
   markAllRead,
+  markRead,
+  isRead,
   dismiss,
   clearAll,
 }: {
   notifications: AppNotification[];
   unreadCount: number;
   markAllRead: () => void;
-  dismiss: (id: string) => void;
+  /** Mark one notification as read (fires when the user clicks it). */
+  markRead: (id: string, taskId?: string) => void;
+  /** Whether a notification was already seen — used to dim read items. */
+  isRead: (id: string, taskId?: string) => boolean;
+  dismiss: (id: string, taskId?: string) => void;
   clearAll: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { supported, permission, request } = useNotifPermission();
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -51,7 +56,7 @@ export default function NotificationBell({
         aria-label={`Notifications (${unreadCount} unread)`}
       >
         {hasOverdue ? (
-          <BellRing size={20} className="text-red-600 animate-pulse" />
+          <Bell size={20} className="text-red-600 animate-pulse" />
         ) : (
           <Bell size={20} />
         )}
@@ -78,16 +83,6 @@ export default function NotificationBell({
             </button>
           </div>
 
-          {supported && permission !== 'granted' && permission !== 'unsupported' && (
-            <button
-              onClick={request}
-              className="w-full text-left px-4 py-2.5 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border-b border-blue-100"
-            >
-              🔔 Click here to also receive <b>browser pop-up alerts</b> for assigned / due-tomorrow /
-              overdue tasks (free — no app install needed).
-            </button>
-          )}
-
           <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
             {notifications.length === 0 ? (
               <div className="py-10 text-center">
@@ -101,27 +96,42 @@ export default function NotificationBell({
               notifications.map((n) => {
                 const s = KIND_STYLE[n.kind];
                 const Icon = s.icon;
+                const isUnread = !isRead(n.id, n.taskId);
+
+                /** Clicking the item (or its link) marks it as read for good. */
+                function openTask() {
+                  markRead(n.id, n.taskId);
+                  setOpen(false);
+                  navigate('/app/tasks');
+                }
+
                 return (
-                  <div key={n.id} className={`group px-4 py-3 ${s.bg}/40 hover:bg-gray-50`}>
+                  <div
+                    key={n.id}
+                    className={`group px-4 py-3 ${s.bg}/40 hover:bg-gray-50 ${
+                      isUnread ? '' : 'opacity-70'
+                    }`}
+                  >
                     <div className="flex gap-3">
                       <div className={`${s.bg} ${s.ring} ring-1 rounded-full p-2 h-fit flex-shrink-0`}>
                         <Icon size={14} className={s.fg} />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-gray-800 leading-snug">{n.title}</p>
+                        <p className="text-xs font-bold text-gray-800 leading-snug">
+                          {n.title}
+                          {isUnread && (
+                            <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-blue-600 align-middle" />
+                          )}
+                        </p>
                         <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{n.body}</p>
-                        <button
-                          onClick={() => {
-                            setOpen(false);
-                            navigate('/app/tasks');
-                          }}
-                          className="text-[11px] text-blue-600 hover:underline mt-1 font-medium"
-                        >
-                          View my tasks →
+                        <button onClick={openTask} className="block w-full text-left">
+                          <span className="text-[11px] text-blue-600 hover:underline mt-1 font-medium inline-block">
+                            View my tasks →
+                          </span>
                         </button>
                       </div>
                       <button
-                        onClick={() => dismiss(n.id)}
+                        onClick={() => dismiss(n.id, n.taskId)}
                         className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200 text-gray-400 self-start"
                         title="Dismiss"
                       >
