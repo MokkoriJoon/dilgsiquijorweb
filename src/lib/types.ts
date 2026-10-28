@@ -24,6 +24,8 @@ export interface Profile {
   /** Position / Designation of the staff member (formerly "Office / Department"). */
   position: string | null;
   role: UserRole;
+  /** Public URL of the avatar stored in the Supabase Storage bucket ("avatars"). */
+  avatar_url?: string | null;
   created_at?: string;
 }
 
@@ -127,14 +129,6 @@ export const ROLE_BADGE_CLASSES: Record<UserRole, string> = {
   ADMIN: 'bg-blue-100 text-blue-700 border-blue-200',
   SUPER_ADMIN: 'bg-purple-100 text-purple-700 border-purple-200',
 };
-
-export function isSuperAdmin(role?: UserRole | string | null): boolean {
-  return role === 'SUPER_ADMIN';
-}
-
-export function isAdminOrAbove(role?: UserRole | string | null): boolean {
-  return role === 'ADMIN' || role === 'SUPER_ADMIN';
-}
 
 // Role assignment is handled entirely in the database: the FIRST user who
 // registers is automatically assigned SUPER_ADMIN by the handle_new_user()

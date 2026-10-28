@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
 import { useSiteBranding } from '../lib/siteSettings';
 import { BrandLogo } from './Login';
+import PasswordInput from '../components/PasswordInput';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -220,13 +221,12 @@ export default function Register() {
                     Password
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="password"
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={18} />
+                    <PasswordInput
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Create a strong password"
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                      className="pl-10 pr-11 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
                     />
                   </div>
@@ -286,13 +286,12 @@ export default function Register() {
                     Confirm Password
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="password"
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={18} />
+                    <PasswordInput
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       placeholder="Confirm your password"
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                      className="pl-10 pr-11 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
                     />
                   </div>

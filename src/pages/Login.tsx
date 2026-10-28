@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Shield, Mail, Lock, ArrowLeft, Loader2 } from 'lucide-react';
 import { useSiteBranding } from '../lib/siteSettings';
+import PasswordInput from '../components/PasswordInput';
 
 /** Renders the site logo: the uploaded image when configured, DILG badge otherwise. */
 export function BrandLogo({ size = 56 }: { size?: number }) {
@@ -187,13 +188,12 @@ export default function Login() {
                     Password
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="password"
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={18} />
+                    <PasswordInput
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter your password"
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                      className="pl-10 pr-11 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
                     />
                   </div>

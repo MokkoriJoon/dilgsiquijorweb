@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   CalendarDays,
 } from 'lucide-react';
+import PasswordInput from '../components/PasswordInput';
 
 interface UserFormState {
   id?: string;
@@ -427,12 +428,11 @@ export default function UserManagement() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Temporary Password *
                   </label>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
                     placeholder="Minimum 8 characters"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm pr-10"
                   />
                 </div>
               )}
