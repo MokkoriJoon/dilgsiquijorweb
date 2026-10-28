@@ -10,7 +10,14 @@
 // The *effective* status of a recurring task is derived from its next
 // unfinished occurrence, so "Overdue" always reflects the real deadline.
 // =====================================================================
-import { addDays, addMonths, differenceInCalendarDays, format, parseISO } from 'date-fns';
+import {
+  addDays,
+  addMonths,
+  differenceInCalendarDays,
+  format,
+  parseISO,
+  startOfDay,
+} from 'date-fns';
 import type { TaskFrequency } from './types';
 
 export const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

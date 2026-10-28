@@ -37,7 +37,7 @@ export default function SiteSettingsPage() {
     setErr('');
     const { error } = await supabase
       .from('site_settings')
-      .upsert({ id: 1, ...form, updated_at: new Date().toISOString() });
+      .upsert({ ...form, id: 1, updated_at: new Date().toISOString() });
     setSaving(false);
     if (error) setErr(error.message);
     else {

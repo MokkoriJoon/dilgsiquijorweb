@@ -146,7 +146,18 @@ export default function UserManagement() {
         p_position: form.position.trim() || null,
         p_role: form.role,
       });
-      err = rpcErr?.message ?? null;
+      // Friendly message for the most common DB errors
+      if (rpcErr) {
+        const m = rpcErr.message ?? '';
+        if (/gen_salt|crypt|pgcrypto/i.test(m)) {
+          err =
+            'Database is missing the pgcrypto extension. Open Supabase → SQL Editor and run supabase/schema.sql once (it installs pgcrypto and recreates admin_create_user).';
+        } else if (/duplicate key/i.test(m)) {
+          err = 'That email is already registered.';
+        } else {
+          err = m;
+        }
+      }
     }
 
     setSaving(false);
