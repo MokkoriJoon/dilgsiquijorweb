@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { supabase } from '../lib/supabase';
+import { friendlyDbError } from './dbErrors';
 import type { Profile, Task, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
 import { resolveTaskStatus, nextOccurrence } from './recurrence';
 
@@ -69,7 +70,7 @@ export function useTasks(profile: Profile | null) {
     }
 
     if (tasksRes.error) {
-      setError(tasksRes.error.message);
+      setError(friendlyDbError(tasksRes.error.message));
     } else {
       const rows = (tasksRes.data ?? []) as any[];
       const list: Task[] = rows.map((r) => {
@@ -230,14 +231,21 @@ export function useTasks(profile: Profile | null) {
 
   const updateTask = async (
     id: string,
-    patch: Partial<Task> & {
+    patch: Partial<Omit<Task, 'links'>> & {
       assignees?: string[];
       links?: { label: string; url: string }[];
     },
   ) => {
     const payload: Record<string, any> = { ...patch, updated_at: new Date().toISOString() };
-    if (patch.status === 'completed') payload.completed_at = new Date().toISOString();
-    if (patch.status === 'pending') payload.completed_at = null;
+    if (patch.status === 'completed') {
+      payload.completed_at = new Date().toISOString();
+      payload.completed_by = profile?.id ?? null;
+    }
+    if (patch.status === 'pending') {
+      payload.completed_at = null;
+      payload.completed_by = null;
+      payload.completion_note = null;
+    }
     delete (payload as any).assignees;
     delete (payload as any).links;
     delete (payload as any).assignee;

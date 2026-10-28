@@ -122,10 +122,11 @@ export default function Categories() {
               value={color}
               onChange={(e) => setColor(e.target.value)}
               className="sm:col-span-2 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+              title="Badge colour — the swatch shown on the category chip and on tasks in this category (not a number)"
             >
               {CATEGORY_COLORS.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  🎨 {c}
                 </option>
               ))}
             </select>

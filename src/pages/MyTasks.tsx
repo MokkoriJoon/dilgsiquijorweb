@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { RefreshCw, AlertTriangle, Lock } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
+import { friendlyDbError } from '../lib/dbErrors';
 import StatsCards, { StatFilter } from '../components/StatsCards';
 import TaskCard from '../components/TaskCard';
 import TaskFormModal from '../components/TaskFormModal';
@@ -58,7 +59,7 @@ export default function MyTasks() {
 
       {t.error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700 flex items-center gap-2">
-          <AlertTriangle size={15} /> {t.error}
+          <AlertTriangle size={15} /> {friendlyDbError(t.error)}
         </div>
       )}
 

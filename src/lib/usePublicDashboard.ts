@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase';
+import { friendlyDbError } from './dbErrors';
 import type { Profile, Task, TaskCategory, TaskLink } from './types';
 import { resolveTaskStatus } from './recurrence';
 import { effectiveDueDate } from './useTasks';
@@ -30,7 +31,7 @@ export function usePublicDashboard() {
       supabase.from('task_assignments').select('task_id,user_id'),
     ]);
 
-    if (tasksRes.error) setError(tasksRes.error.message);
+    if (tasksRes.error) setError(friendlyDbError(tasksRes.error.message));
 
     const pmap = new Map<string, Profile>();
     ((profilesRes.data ?? []) as Profile[]).forEach((p) => pmap.set(p.id, p));
