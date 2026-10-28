@@ -1,86 +1,70 @@
 import { useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Plus, RefreshCw, AlertTriangle, X } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { friendlyDbError } from '../lib/dbErrors';
 import StatsCards, { StatFilter } from '../components/StatsCards';
+import FrequencyFilter from '../components/FrequencyFilter';
 import TaskCard from '../components/TaskCard';
 import TaskFormModal from '../components/TaskFormModal';
-import type { Task } from '../lib/types';
+import { draftToPayload, Spinner, EmptyState } from './dashboardShared';
+import type { Task, TaskFrequency } from '../lib/types';
 
 interface Ctx {
   profile: NonNullable<ReturnType<typeof useAuth>['profile']>;
   isAdminOrAbove: boolean;
 }
 
-/** Convert a modal draft into the payload understood by useTasks. */
-export function draftToPayload(draft: {
-  title: string;
-  description: string;
-  due_date: string;
-  frequency: string;
-  days_of_week: number[];
-  repeat_forever: boolean;
-  category_id: string;
-  assignees: string[];
-  links: { label: string; url: string }[];
-  status: 'pending' | 'completed';
-}) {
-  return {
-    title: draft.title,
-    description: draft.description || null,
-    due_date: draft.due_date ? new Date(`${draft.due_date}T09:00:00`).toISOString() : null,
-    frequency: draft.frequency as Task['frequency'],
-    days_of_week: draft.days_of_week,
-    repeat_forever: draft.repeat_forever,
-    category_id: draft.category_id || null,
-    assigned_to: draft.assignees[0],
-    assignees: draft.assignees,
-    links: draft.links,
-    status: draft.status,
-  };
-}
-
-export function Spinner() {
-  return (
-    <div className="py-20 flex justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700" />
-    </div>
-  );
-}
-
-export function EmptyState({ filtered }: { filtered?: boolean }) {
-  return (
-    <div className="bg-white rounded-xl border border-dashed border-gray-200 py-14 text-center">
-      <p className="text-gray-500 font-medium">
-        {filtered ? 'No tasks match this filter.' : 'No tasks yet.'}
-      </p>
-      <p className="text-sm text-gray-400 mt-1">
-        {filtered
-          ? 'Click the active card again to reset the filter.'
-          : 'Assigned tasks will appear here.'}
-      </p>
-    </div>
-  );
-}
-
 /**
  * Personal Dashboard — the logged-in user's own assigned tasks.
- * Cards are clickable to filter (All / Pending / Complete / Overdue).
+ *  • Cards filter by status (All / Pending / Complete / Overdue).
+ *  • Frequency buttons under the cards combine WITH the status card:
+ *      Pending + Daily   → only pending daily tasks.
+ *      Overdue + Monthly → only overdue monthly tasks.
+ *  • Clicking the active card again resets ALL filters (fixed reset).
  */
 export default function AppDashboard() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
   const t = useTasks(profile);
   const [filter, setFilter] = useState<StatFilter>('all');
+  const [freqs, setFreqs] = useState<TaskFrequency[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
+
+  /** Clicking the already-active card resets BOTH status and frequency. */
+  function handleCardSelect(f: StatFilter) {
+    if (f === filter) {
+      setFilter('all');
+      setFreqs([]);
+    } else {
+      setFilter(f);
+    }
+  }
+
+  function toggleFreq(f: TaskFrequency) {
+    setFreqs((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
+  }
 
   const list = useMemo(() => {
     let items = t.myTasks;
     if (filter !== 'all') items = items.filter((x) => t.statusOf(x) === filter);
+    if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
     return items;
+  }, [t.myTasks, t.statusOf, filter, freqs]);
+
+  /** Per-frequency counts within the currently selected status card. */
+  const freqCounts = useMemo(() => {
+    const base =
+      filter === 'all' ? t.myTasks : t.myTasks.filter((x) => t.statusOf(x) === filter);
+    const map: Partial<Record<TaskFrequency, number>> = {};
+    base.forEach((x) => {
+      map[x.frequency] = (map[x.frequency] ?? 0) + 1;
+    });
+    return map;
   }, [t.myTasks, t.statusOf, filter]);
+
+  const filtersActive = filter !== 'all' || freqs.length > 0;
 
   async function handleSubmit(draft: Parameters<typeof draftToPayload>[0]) {
     const payload = draftToPayload(draft);
@@ -96,7 +80,8 @@ export default function AppDashboard() {
         <div>
           <h1 className="text-2xl font-bold text-gray-800">My Dashboard</h1>
           <p className="text-sm text-gray-500">
-            Tasks assigned to you — click a card to filter the list.
+            Tasks assigned to you — click a card to filter, then narrow further with the frequency
+            buttons below. Both filters work together.
           </p>
         </div>
         <div className="flex gap-2">
@@ -124,10 +109,51 @@ export default function AppDashboard() {
         </div>
       )}
 
-      <StatsCards stats={t.stats.mine} active={filter} onSelect={setFilter} />
+      <StatsCards stats={t.stats.mine} active={filter} onSelect={handleCardSelect} />
+
+      <FrequencyFilter
+        active={freqs}
+        counts={freqCounts}
+        onToggle={toggleFreq}
+        onClear={() => setFreqs([])}
+      />
+
+      {filtersActive && (
+        <div className="flex flex-wrap items-center gap-2 mb-4 -mt-2">
+          <span className="text-xs text-gray-500">Active filters:</span>
+          {filter !== 'all' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
+              {filter}
+              <button onClick={() => setFilter('all')} title="Remove status filter">
+                <X size={11} />
+              </button>
+            </span>
+          )}
+          {freqs.map((f) => (
+            <span
+              key={f}
+              className="inline-flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize"
+            >
+              {f}
+              <button onClick={() => toggleFreq(f)} title={`Remove ${f} filter`}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          <button
+            onClick={() => {
+              setFilter('all');
+              setFreqs([]);
+            }}
+            className="text-[11px] font-semibold text-red-600 hover:underline ml-1"
+          >
+            Reset all filters
+          </button>
+        </div>
+      )}
 
       {list.length === 0 ? (
-        <EmptyState filtered={filter !== 'all'} />
+        <EmptyState filtered={filtersActive} />
       ) : (
         <div className="space-y-3">
           {list.map((task) => (
@@ -169,3 +195,6 @@ export default function AppDashboard() {
     </div>
   );
 }
+
+// Re-export shared helpers so existing imports keep working.
+export { draftToPayload, Spinner, EmptyState };
