@@ -119,6 +119,15 @@ export function useTasks(profile: Profile | null) {
     return map;
   }, [categories]);
 
+  /** How many tasks use each category (for the Categories page). */
+  const categoryTaskCount = useMemo(() => {
+    const map = new Map<string, number>();
+    tasks.forEach((t) => {
+      if (t.category_id) map.set(t.category_id, (map.get(t.category_id) ?? 0) + 1);
+    });
+    return map;
+  }, [tasks]);
+
   /** Tasks visible to the current user under RLS. */
   const visibleTasks = tasks;
 
@@ -342,6 +351,7 @@ export function useTasks(profile: Profile | null) {
     links,
     profileById,
     categoryById,
+    categoryTaskCount,
     loading,
     error,
     stats,
