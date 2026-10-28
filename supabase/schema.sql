@@ -163,7 +163,10 @@ CREATE TABLE IF NOT EXISTS public.site_settings (
   footer_text      TEXT,
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-INSERT INTO public.site_settings (id) ON CONFLICT (id) DO NOTHING;
+-- NOTE: VALUES (...) is required before the ON CONFLICT clause.
+INSERT INTO public.site_settings (id)
+VALUES (1)
+ON CONFLICT (id) DO NOTHING;
 
 -- Keep task_assignments in sync with the legacy single-assignee column.
 CREATE OR REPLACE FUNCTION public.sync_task_assignment()
