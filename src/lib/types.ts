@@ -6,7 +6,8 @@ export interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
-  office: string | null;
+  /** Position / Designation of the staff member (formerly "Office / Department"). */
+  position: string | null;
   role: UserRole;
   created_at?: string;
 }
@@ -33,7 +34,7 @@ export interface Task {
   assigned_by: string | null;
   created_at?: string;
   updated_at?: string;
-  assignee?: Pick<Profile, 'full_name' | 'office' | 'role'> | null;
+  assignee?: Pick<Profile, 'full_name' | 'position' | 'role'> | null;
 }
 
 export const ROLE_LABELS: Record<UserRole, string> = {
@@ -58,3 +59,21 @@ export function isAdminOrAbove(role?: UserRole | string | null): boolean {
 
 /** The account that must always exist as SUPER_ADMIN (seeded via SQL script). */
 export const PRIMARY_SUPER_ADMIN_EMAIL = 'calibojunfranz@gmail.com';
+
+/**
+ * Guarantee the primary account is a SUPER_ADMIN.
+ *
+ * Runs client-side after sign-in so the promotion also works when the Supabase
+ * SQL seed script has not been applied yet (RLS lets a SUPER_ADMIN update every
+ * profile, and users can always update their own row).
+ */
+export async function ensurePrimarySuperAdmin(userId: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user?.email?.toLowerCase() !== PRIMARY_SUPER_ADMIN_EMAIL) return;
+
+  await supabase
+    .from('profiles')
+    .update({ role: 'SUPER_ADMIN', updated_at: new Date().toISOString() })
+    .eq('id', userId)
+    .neq('role', 'SUPER_ADMIN');
+}
