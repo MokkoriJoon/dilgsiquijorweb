@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { UserPlus, Mail, Lock, User, Building2, ArrowLeft, Loader2, Check, X } from 'lucide-react';
+import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -9,7 +9,7 @@ export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [office, setOffice] = useState('');
+  const [position, setPosition] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -68,8 +68,8 @@ export default function Register() {
       setError('Passwords do not match');
       return;
     }
-    if (!office.trim()) {
-      setError('Office/Department is required');
+    if (!position.trim()) {
+      setError('Position/Designation is required');
       return;
     }
 
@@ -81,7 +81,8 @@ export default function Register() {
         options: {
           data: {
             full_name: fullName.trim(),
-            office: office.trim(),
+            position: position.trim(),
+            role: 'STANDARD',
           },
         },
       });
@@ -196,18 +197,18 @@ export default function Register() {
                   </div>
                 </div>
 
-                {/* Office/Department */}
+                {/* Position/Designation */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Office / Department
+                    Position / Designation
                   </label>
                   <div className="relative">
-                    <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input
                       type="text"
-                      value={office}
-                      onChange={(e) => setOffice(e.target.value)}
-                      placeholder="e.g., Planning Division"
+                      value={position}
+                      onChange={(e) => setPosition(e.target.value)}
+                      placeholder="e.g., Administrative Officer"
                       className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
                     />

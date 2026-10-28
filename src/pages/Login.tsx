@@ -47,7 +47,7 @@ export default function Login() {
       }
 
       if (data.session) {
-        navigate('/');
+        navigate('/app/dashboard');
       }
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');

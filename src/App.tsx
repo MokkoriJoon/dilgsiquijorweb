@@ -1,50 +1,31 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import { supabase } from './lib/supabase';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import AppLayout from './components/AppLayout';
+import AppDashboard from './pages/AppDashboard';
+import MyTasks from './pages/MyTasks';
+import UserManagement from './pages/UserManagement';
 
-function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setIsAuthenticated(!!session);
-      setLoading(false);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthenticated(!!session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-800"></div>
-      </div>
-    );
-  }
-
+export default function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Dashboard isAuthenticated={isAuthenticated} />} />
-        <Route path="/login" element={
-          isAuthenticated ? <Navigate to="/" replace /> : <Login />
-        } />
-        <Route path="/register" element={
-          isAuthenticated ? <Navigate to="/" replace /> : <Register />
-        } />
+        {/* Public Viewing Dashboard (read-only) */}
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+
+        {/* Authenticated workspace — sidebar menu on the left */}
+        <Route path="/app" element={<AppLayout />}>
+          <Route index element={<Navigate to="/app/dashboard" replace />} />
+          <Route path="dashboard" element={<AppDashboard />} />
+          <Route path="tasks" element={<MyTasks />} />
+          <Route path="users" element={<UserManagement />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );
 }
-
-export default App;

@@ -79,7 +79,7 @@ CREATE TABLE tasks (
 CREATE TABLE profiles (
   id UUID REFERENCES auth.users(id) PRIMARY KEY,
   full_name TEXT,
-  office TEXT,
+  position TEXT, -- Position / Designation
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
