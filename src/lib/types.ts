@@ -12,7 +12,15 @@ export interface Profile {
   created_at?: string;
 }
 
-export type TaskStatus = 'pending' | 'in-progress' | 'completed';
+/**
+ * Stored task status. The UI only ever exposes three states:
+ * Complete ('completed') · Pending ('pending') · Overdue (derived from the
+ * due date / recurrence schedule — see `resolveTaskStatus` in lib/recurrence).
+ */
+export type TaskStatus = 'pending' | 'completed';
+
+/** Status as displayed after overdue is derived. */
+export type DisplayTaskStatus = 'pending' | 'completed' | 'overdue';
 
 export type TaskFrequency =
   | 'daily'
@@ -23,18 +31,67 @@ export type TaskFrequency =
   | 'yearly'
   | 'one-time';
 
+/** A link/resource attached to a task that assignees can click. */
+export interface TaskLink {
+  id: string;
+  task_id: string;
+  label: string;
+  url: string;
+  created_at?: string;
+}
+
+/** Task Category (e.g. Reporting, Peace & Order) — DILG Siquijor Province. */
+export interface TaskCategory {
+  id: string;
+  name: string;
+  color: string | null;
+  description: string | null;
+  created_by: string | null;
+  created_at?: string;
+}
+
+/** Personal bookmark / self-view resource link saved by any user. */
+export interface Bookmark {
+  id: string;
+  user_id: string;
+  label: string;
+  url: string;
+  note: string | null;
+  created_at?: string;
+}
+
+export interface TaskAssignment {
+  task_id: string;
+  user_id: string;
+}
+
 export interface Task {
   id: string;
   title: string;
   description: string | null;
   due_date: string | null;
+  /** Template/anchor date for recurring tasks. */
+  start_date: string | null;
   frequency: TaskFrequency;
+  /** Weekdays for 'daily' recurrence. 0 = Monday … 6 = Sunday. */
+  days_of_week: number[] | null;
+  repeat_forever: boolean;
   status: TaskStatus;
+  /** Legacy single-assignee column (kept in sync with assignments[0]). */
   assigned_to: string;
   assigned_by: string | null;
+  category_id: string | null;
   created_at?: string;
   updated_at?: string;
+  completed_at?: string | null;
+  completion_note?: string | null;
+  completed_by?: string | null;
   assignee?: Pick<Profile, 'full_name' | 'position' | 'role'> | null;
+  /** All users assigned to this task (multiple users per task). */
+  assignees?: string[];
+  assignee_profiles?: Profile[];
+  links?: TaskLink[];
+  category?: TaskCategory | null;
 }
 
 export const ROLE_LABELS: Record<UserRole, string> = {

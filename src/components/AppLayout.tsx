@@ -7,18 +7,24 @@ import {
   LogOut,
   Menu,
   X,
-  Eye,
+  FolderTree,
+  Bookmark,
+  Settings2,
+  Tags,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
+import { useSiteBranding } from '../lib/siteSettings';
 
 /**
- * Authenticated area shell: left sidebar menu (Dashboard, My Tasks, …)
- * plus a top bar with the signed-in user's identity.
+ * Authenticated area shell: left sidebar menu + top bar.
+ * NOTE: "General → Public Dashboard" was removed — logged-in users navigate to
+ * the public board through their browser if needed, it is no longer a menu item.
  */
 export default function AppLayout() {
   const { profile, loading } = useAuth();
+  const { branding } = useSiteBranding();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -30,19 +36,28 @@ export default function AppLayout() {
     );
   }
 
-  // Route guard — unauthenticated users go back to the public dashboard
+  // Route guard — unauthenticated users go back to the login screen
   if (!profile) {
     navigate('/login', { replace: true });
     return null;
   }
 
   const role = profile.role;
+  const isAdminOrAbove = role === 'ADMIN' || role === 'SUPER_ADMIN';
 
   const menuItems = [
     { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/app/tasks', label: 'My Tasks', icon: ListChecks },
+    { to: '/app/task-management', label: 'Task Management', icon: FolderTree },
+    { to: '/app/resources', label: 'Resource Links', icon: Bookmark },
+    ...(isAdminOrAbove
+      ? [{ to: '/app/categories', label: 'Task Categories', icon: Tags }]
+      : []),
     ...(role === 'SUPER_ADMIN'
-      ? [{ to: '/app/users', label: 'User Management', icon: Users }]
+      ? [
+          { to: '/app/users', label: 'User Management', icon: Users },
+          { to: '/app/settings', label: 'Website Settings', icon: Settings2 },
+        ]
       : []),
   ];
 
@@ -51,21 +66,33 @@ export default function AppLayout() {
     navigate('/');
   };
 
+  const initials = (profile.full_name ?? 'S')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase();
+
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
       {/* Brand */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-700/60">
-        <div className="w-11 h-11 rounded-full bg-white flex items-center justify-center shadow flex-shrink-0">
-          <div className="w-9 h-9 rounded-full bg-blue-900 flex items-center justify-center">
-            <span className="text-white font-bold text-[9px]">DILG</span>
-          </div>
+        <div className="w-11 h-11 rounded-full bg-white flex items-center justify-center shadow flex-shrink-0 overflow-hidden">
+          {branding.logoUrl ? (
+            <img src={branding.logoUrl} alt="Logo" className="w-11 h-11 object-contain" />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-blue-900 flex items-center justify-center">
+              <span className="text-white font-bold text-[9px]">DILG</span>
+            </div>
+          )}
         </div>
         <div className="min-w-0">
-          <h1 className="text-white font-bold text-base tracking-wide leading-tight">
-            D.E.N.N.I.S
+          <h1 className="text-white font-bold text-base tracking-wide leading-tight truncate">
+            {branding.name}
           </h1>
-          <p className="text-slate-400 text-[10px] leading-tight mt-0.5">
-            Employee Workspace
+          <p className="text-slate-400 text-[10px] leading-tight mt-0.5 line-clamp-2">
+            Siquijor Provincial Office
           </p>
         </div>
       </div>
@@ -74,13 +101,7 @@ export default function AppLayout() {
       <div className="px-4 py-4 border-b border-slate-700/60">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-blue-700 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
-            {(profile.full_name ?? 'S')
-              .split(' ')
-              .filter(Boolean)
-              .slice(0, 2)
-              .map((n) => n[0])
-              .join('')
-              .toUpperCase()}
+            {initials}
           </div>
           <div className="min-w-0">
             <p className="text-white text-sm font-medium truncate">
@@ -117,17 +138,6 @@ export default function AppLayout() {
             {item.label}
           </NavLink>
         ))}
-
-        <p className="px-3 pt-5 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-          General
-        </p>
-        <Link
-          to="/"
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/60 hover:text-white transition-colors"
-        >
-          <Eye size={18} />
-          Public Dashboard
-        </Link>
       </nav>
 
       {/* Sign out */}
@@ -172,23 +182,32 @@ export default function AppLayout() {
 
       {/* Main content */}
       <div className="flex-1 lg:ml-64 flex flex-col min-h-screen">
-        {/* Top bar */}
         <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
           <div className="flex items-center justify-between px-4 sm:px-6 py-3">
-            <button
-              onClick={() => setMobileOpen(true)}
-              className="lg:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
-              aria-label="Open menu"
-            >
-              <Menu size={22} />
-            </button>
-            <div className="hidden lg:block">
-              <p className="text-sm text-gray-500">
-                Welcome back,{' '}
-                <span className="font-semibold text-gray-800">
-                  {profile.full_name?.split(' ')[0] ?? 'Staff'}
-                </span>
-              </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMobileOpen(true)}
+                className="lg:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+                aria-label="Open menu"
+              >
+                <Menu size={22} />
+              </button>
+              <Link to="/" className="flex items-center gap-2 min-w-0">
+                {branding.logoUrl && (
+                  <img
+                    src={branding.logoUrl}
+                    alt="Logo"
+                    className="w-8 h-8 rounded object-contain bg-white"
+                  />
+                )}
+                <p className="hidden lg:block text-sm text-gray-500 truncate">
+                  Welcome back,{' '}
+                  <span className="font-semibold text-gray-800">
+                    {profile.full_name?.split(' ')[0] ?? 'Staff'}
+                  </span>{' '}
+                  · <span className="font-medium text-gray-700">{branding.name}</span>
+                </p>
+              </Link>
             </div>
             <div className="flex items-center gap-2">
               <span
@@ -204,8 +223,12 @@ export default function AppLayout() {
         </header>
 
         <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6">
-          <Outlet context={{ profile }} />
+          <Outlet context={{ profile, isAdminOrAbove }} />
         </main>
+
+        <footer className="px-6 py-4 text-center text-xs text-gray-400 border-t border-gray-100 bg-white">
+          {branding.footerText}
+        </footer>
       </div>
     </div>
   );
