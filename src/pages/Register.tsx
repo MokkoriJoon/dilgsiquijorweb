@@ -82,6 +82,7 @@ export default function Register() {
           data: {
             full_name: fullName.trim(),
             office: office.trim(),
+            role: 'STANDARD',
           },
         },
       });
