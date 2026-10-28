@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 export type UserRole = 'STANDARD' | 'ADMIN' | 'SUPER_ADMIN';
 
 export const USER_ROLES: UserRole[] = ['STANDARD', 'ADMIN', 'SUPER_ADMIN'];

@@ -16,6 +16,10 @@ export function useAuth() {
     let mounted = true;
 
     const loadProfile = async (userId: string) => {
+      // Bootstrap: if the signed-in user is the primary account, guarantee it
+      // has the SUPER_ADMIN role even before the SQL seed script is applied.
+      await ensurePrimarySuperAdmin(userId);
+
       const { data } = await supabase
         .from('profiles')
         .select('*')
