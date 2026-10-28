@@ -188,6 +188,11 @@ END $$;
 
 -- 7) SECURITY DEFINER RPC: allow a SUPER_ADMIN to create new users from the app
 --    (bypasses the need for service-role keys on the client).
+--    Drop first so the parameter rename (p_office -> p_position) applies cleanly.
+-- Drop BOTH the old (p_office) and new (p_position) variants. Postgres identifies
+-- functions by argument TYPES only, so these two DROPs cover both signatures.
+DROP FUNCTION IF EXISTS public.admin_create_user(text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.admin_create_user(text, text, text, text, text);
 CREATE OR REPLACE FUNCTION public.admin_create_user(
   p_email TEXT,
   p_password TEXT,
