@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, RefreshCw, AlertTriangle, FolderTree, Search } from 'lucide-react';
+import { Plus, RefreshCw, AlertTriangle, FolderTree, Search, X } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { friendlyDbError } from '../lib/dbErrors';
 import StatsCards, { StatFilter } from '../components/StatsCards';
+import FrequencyFilter from '../components/FrequencyFilter';
 import TaskCard from '../components/TaskCard';
 import TaskFormModal from '../components/TaskFormModal';
-import { draftToPayload } from './AppDashboard';
-import type { Task } from '../lib/types';
+import { draftToPayload } from './dashboardShared';
+import type { Task, TaskFrequency } from '../lib/types';
 
 interface Ctx {
   profile: NonNullable<ReturnType<typeof useAuth>['profile']>;
@@ -19,18 +20,35 @@ interface Ctx {
  * Task Management — the global repository of ALL tasks (for reusability and
  * global edit). Admins & Super Admins can create/edit/delete any task here;
  * standard users get a read-only view. Overdue items float to the top.
+ * Status cards + frequency buttons combine (e.g. Pending + Daily).
  */
 export default function TaskManagement() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
   const t = useTasks(profile);
   const [filter, setFilter] = useState<StatFilter>('all');
+  const [freqs, setFreqs] = useState<TaskFrequency[]>([]);
   const [q, setQ] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
 
+  /** Clicking the already-active card resets BOTH status and frequency. */
+  function handleCardSelect(f: StatFilter) {
+    if (f === filter) {
+      setFilter('all');
+      setFreqs([]);
+    } else {
+      setFilter(f);
+    }
+  }
+
+  function toggleFreq(f: TaskFrequency) {
+    setFreqs((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
+  }
+
   const list = useMemo(() => {
     let items = t.tasks; // every visible task = the repository
     if (filter !== 'all') items = items.filter((x) => t.statusOf(x) === filter);
+    if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
     if (q.trim()) {
       const needle = q.trim().toLowerCase();
       items = items.filter(
@@ -41,7 +59,19 @@ export default function TaskManagement() {
       );
     }
     return items;
-  }, [t.tasks, t.statusOf, filter, q]);
+  }, [t.tasks, t.statusOf, filter, freqs, q]);
+
+  /** Per-frequency counts within the currently selected status card. */
+  const freqCounts = useMemo(() => {
+    const base = filter === 'all' ? t.tasks : t.tasks.filter((x) => t.statusOf(x) === filter);
+    const map: Partial<Record<TaskFrequency, number>> = {};
+    base.forEach((x) => {
+      map[x.frequency] = (map[x.frequency] ?? 0) + 1;
+    });
+    return map;
+  }, [t.tasks, t.statusOf, filter]);
+
+  const filtersActive = filter !== 'all' || freqs.length > 0;
 
   async function handleSubmit(draft: Parameters<typeof draftToPayload>[0]) {
     const payload = draftToPayload(draft);
@@ -102,7 +132,48 @@ export default function TaskManagement() {
         </div>
       )}
 
-      <StatsCards stats={t.stats.all} active={filter} onSelect={setFilter} />
+      <StatsCards stats={t.stats.all} active={filter} onSelect={handleCardSelect} />
+
+      <FrequencyFilter
+        active={freqs}
+        counts={freqCounts}
+        onToggle={toggleFreq}
+        onClear={() => setFreqs([])}
+      />
+
+      {filtersActive && (
+        <div className="flex flex-wrap items-center gap-2 mb-4 -mt-2">
+          <span className="text-xs text-gray-500">Active filters:</span>
+          {filter !== 'all' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
+              {filter}
+              <button onClick={() => setFilter('all')} title="Remove status filter">
+                <X size={11} />
+              </button>
+            </span>
+          )}
+          {freqs.map((f) => (
+            <span
+              key={f}
+              className="inline-flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize"
+            >
+              {f}
+              <button onClick={() => toggleFreq(f)} title={`Remove ${f} filter`}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          <button
+            onClick={() => {
+              setFilter('all');
+              setFreqs([]);
+            }}
+            className="text-[11px] font-semibold text-red-600 hover:underline ml-1"
+          >
+            Reset all filters
+          </button>
+        </div>
+      )}
 
       <div className="relative mb-4 max-w-md">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />

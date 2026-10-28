@@ -14,6 +14,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
+import { useTasks } from '../lib/useTasks';
+import { useNotifications } from '../lib/notifications';
+import NotificationBell from './NotificationBell';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { useSiteBranding } from '../lib/siteSettings';
 
@@ -27,6 +30,10 @@ export default function AppLayout() {
   const { branding } = useSiteBranding();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Free notification system: derive alerts from the user's own tasks.
+  const t = useTasks(profile ?? null);
+  const notif = useNotifications(profile ?? null, t.myTasks);
 
   if (loading) {
     return (
@@ -210,6 +217,13 @@ export default function AppLayout() {
               </Link>
             </div>
             <div className="flex items-center gap-2">
+              <NotificationBell
+                notifications={notif.notifications}
+                unreadCount={notif.unreadCount}
+                markAllRead={notif.markAllRead}
+                dismiss={notif.dismiss}
+                clearAll={notif.clearAll}
+              />
               <span
                 className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[role]}`}
               >

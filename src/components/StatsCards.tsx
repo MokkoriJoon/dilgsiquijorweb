@@ -14,6 +14,7 @@ interface Card {
 
 /**
  * Dashboard cards — each card is clickable and filters the task list below.
+ * Clicking the already-active card resets the filter (handled by onSelect).
  */
 export default function StatsCards({
   stats,
@@ -64,7 +65,7 @@ export default function StatsCards({
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       {cards.map((card) => {
         const isActive = active === card.id;
         return (
@@ -87,7 +88,7 @@ export default function StatsCards({
                   isActive ? 'text-gray-700' : 'text-blue-500'
                 }`}
               >
-                {isActive ? 'Filter active · click to reset' : 'Click to filter'}
+                {isActive ? '✓ Filter active · click again to reset' : 'Click to filter'}
               </p>
             </div>
             <div className={`${card.iconBg} p-3 rounded-full`}>

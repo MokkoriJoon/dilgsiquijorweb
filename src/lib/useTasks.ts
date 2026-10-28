@@ -389,6 +389,18 @@ export function effectiveDueDate(t: Task): string {
   return nxt ? format(nxt, 'yyyy-MM-dd') : stored;
 }
 
+/**
+ * Calendar days from TODAY until the task's effective deadline.
+ * Negative = overdue by N days. Null when the task has no due date.
+ * Used by the reminder/notification system ("due 1 day before", "overdue").
+ */
+export function daysUntilEffectiveDeadline(t: Task, now: Date = new Date()): number | null {
+  const due = effectiveDueDate(t);
+  if (!due || due === '9999-12-31') return null;
+  const dueDay = startOfDay(parseISO(due));
+  return Math.round((dueDay.getTime() - startOfDay(now).getTime()) / 86_400_000);
+}
+
 function dedupe(list: string[]): string[] {
   return [...new Set(list)];
 }
