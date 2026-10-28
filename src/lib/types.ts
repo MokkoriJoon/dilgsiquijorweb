@@ -2,6 +2,21 @@ export type UserRole = 'STANDARD' | 'ADMIN' | 'SUPER_ADMIN';
 
 export const USER_ROLES: UserRole[] = ['STANDARD', 'ADMIN', 'SUPER_ADMIN'];
 
+/**
+ * True only for ADMIN / SUPER_ADMIN. Use it to gate every capability that
+ * affects the whole system (creating/assigning organization tasks, editing or
+ * deleting tasks globally, managing task categories…). STANDARD users may only
+ * complete what they were assigned and manage their own Personal Tasks.
+ */
+export function isAdminOrAbove(role?: string | null): boolean {
+  return role === 'ADMIN' || role === 'SUPER_ADMIN';
+}
+
+/** True for the top-level administrator only. */
+export function isSuperAdmin(role?: string | null): boolean {
+  return role === 'SUPER_ADMIN';
+}
+
 export interface Profile {
   id: string;
   full_name: string | null;

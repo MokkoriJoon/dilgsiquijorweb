@@ -16,6 +16,8 @@ export function draftToPayload(draft: {
   assignees: string[];
   links: { label: string; url: string }[];
   status: 'pending' | 'completed';
+  /** Personal (private) task — never counted in organization-wide totals. */
+  is_personal?: boolean;
 }) {
   return {
     title: draft.title,
@@ -29,6 +31,7 @@ export function draftToPayload(draft: {
     assignees: draft.assignees,
     links: draft.links,
     status: draft.status,
+    is_personal: !!draft.is_personal,
   };
 }
 
