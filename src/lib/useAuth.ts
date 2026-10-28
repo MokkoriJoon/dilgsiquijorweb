@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase';
 import type { Profile, UserRole } from './types';
 
@@ -75,7 +75,12 @@ export function useAuth() {
   );
   const isSuperAdmin = useMemo(() => profile?.role === 'SUPER_ADMIN', [profile]);
 
-  return { profile, loading, isAdminOrAbove, isSuperAdmin };
+  /** Merge local changes (e.g. after the profile modal saves) into the cached profile. */
+  const updateProfile = useCallback((patch: Partial<Profile>) => {
+    setProfile((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
+  return { profile, loading, isAdminOrAbove, isSuperAdmin, updateProfile };
 }
 
 /** Manually refresh the profile (e.g. after an admin changes your role elsewhere). */

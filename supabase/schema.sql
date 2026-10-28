@@ -480,3 +480,42 @@ BEGIN
 
   RETURN v_user_id;
 END $$;
+
+-- 8) PROFILE PICTURES — Supabase Storage ("avatars" bucket)
+-- ---------------------------------------------------------------------
+-- Every user can add/edit their own profile picture. The client compresses
+-- the image (resize ≤512px + JPEG re-encode, see src/lib/avatar.ts) before
+-- uploading to {user_id}/avatar.{ext}, then stores the public URL in
+-- profiles.avatar_url. Re-running this block is safe.
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
+-- Create the public "avatars" bucket if it does not exist yet.
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO UPDATE SET public = TRUE;
+
+-- Anyone may view avatars (they are shown on public dashboards & task cards).
+DROP POLICY IF EXISTS "Avatars are publicly readable" ON storage.objects;
+CREATE POLICY "Avatars are publicly readable"
+  ON storage.objects FOR SELECT
+  TO public
+  USING (bucket_id = 'avatars');
+
+-- Authenticated users may upload into their OWN folder only.
+DROP POLICY IF EXISTS "Users upload own avatar" ON storage.objects;
+CREATE POLICY "Users upload own avatar"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text);
+
+-- Update = delete + re-insert (upsert), so both must be allowed for the owner.
+DROP POLICY IF EXISTS "Users replace own avatar" ON storage.objects;
+CREATE POLICY "Users replace own avatar"
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text)
+  WITH CHECK (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text);
+
+DROP POLICY IF EXISTS "Users delete own avatar" ON storage.objects;
+CREATE POLICY "Users delete own avatar"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text);

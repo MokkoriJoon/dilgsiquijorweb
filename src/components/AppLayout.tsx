@@ -18,6 +18,7 @@ import { useTasks } from '../lib/useTasks';
 import { useNotifications } from '../lib/notifications';
 import NotificationBell from './NotificationBell';
 import ProfileModal from './ProfileModal';
+import Avatar from './Avatar';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { useSiteBranding } from '../lib/siteSettings';
 
@@ -27,7 +28,7 @@ import { useSiteBranding } from '../lib/siteSettings';
  * the public board through their browser if needed, it is no longer a menu item.
  */
 export default function AppLayout() {
-  const { profile, loading } = useAuth();
+  const { profile, loading, updateProfile } = useAuth();
   const { branding } = useSiteBranding();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -53,7 +54,6 @@ export default function AppLayout() {
 
   const role = profile.role;
   const isAdminOrAbove = role === 'ADMIN' || role === 'SUPER_ADMIN';
-
   const menuItems = [
     { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/app/tasks', label: 'My Tasks', icon: ListChecks },
@@ -74,14 +74,6 @@ export default function AppLayout() {
     await supabase.auth.signOut();
     navigate('/');
   };
-
-  const initials = (profile.full_name ?? 'S')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase();
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
@@ -117,9 +109,7 @@ export default function AppLayout() {
           title="View my profile"
           className="w-full flex items-center gap-3 rounded-lg p-1 -m-1 text-left hover:bg-slate-700/50 transition-colors"
         >
-          <div className="w-10 h-10 rounded-full bg-blue-700 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
-            {initials}
-          </div>
+          <Avatar name={profile.full_name} src={profile.avatar_url} size={40} />
           <div className="min-w-0">
             <p className="text-white text-sm font-medium truncate">
               {profile.full_name ?? 'Staff Member'}
@@ -247,9 +237,7 @@ export default function AppLayout() {
                 title="View my profile"
                 className="flex items-center gap-2 rounded-full border border-gray-200 pl-1 pr-3 py-1 hover:bg-gray-50 transition-colors"
               >
-                <span className="w-8 h-8 rounded-full bg-blue-700 text-white flex items-center justify-center text-xs font-semibold flex-shrink-0">
-                  {initials}
-                </span>
+                <Avatar name={profile.full_name} src={profile.avatar_url} size={32} />
                 <span className="text-sm text-gray-600 hidden md:block truncate max-w-[160px]">
                   {profile.full_name?.split(' ')[0] ?? 'Profile'}
                 </span>
