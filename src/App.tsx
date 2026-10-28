@@ -1,15 +1,27 @@
+import { Suspense, lazy } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from './components/AppLayout';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import UserManagement from './pages/UserManagement';
-import AppDashboard from './pages/AppDashboard';
-import MyTasks from './pages/MyTasks';
-import TaskManagement from './pages/TaskManagement';
-import ResourceLinks from './pages/ResourceLinks';
-import Categories from './pages/Categories';
-import SiteSettings from './pages/SiteSettings';
-import PublicDashboard from './pages/PublicDashboard';
+
+// Code-splitting: each page is loaded only when visited, which keeps the
+// initial download small (helps bandwidth on free hosting tiers).
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const AppDashboard = lazy(() => import('./pages/AppDashboard'));
+const MyTasks = lazy(() => import('./pages/MyTasks'));
+const TaskManagement = lazy(() => import('./pages/TaskManagement'));
+const ResourceLinks = lazy(() => import('./pages/ResourceLinks'));
+const Categories = lazy(() => import('./pages/Categories'));
+const SiteSettings = lazy(() => import('./pages/SiteSettings'));
+const PublicDashboard = lazy(() => import('./pages/PublicDashboard'));
+
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700" />
+    </div>
+  );
+}
 
 /**
  * D.E.N.N.I.S — DILG Employee Navigation & Notices Information System
@@ -26,6 +38,7 @@ import PublicDashboard from './pages/PublicDashboard';
 export default function App() {
   return (
     <HashRouter>
+      <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/" element={<PublicDashboard />} />
         <Route path="/login" element={<Login />} />
@@ -44,6 +57,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </HashRouter>
   );
 }
