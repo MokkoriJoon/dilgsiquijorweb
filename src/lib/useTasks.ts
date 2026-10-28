@@ -7,7 +7,7 @@ import { resolveTaskStatus, nextOccurrence } from './recurrence';
 
 /** Columns selected from the tasks table. */
 const TASK_SELECT =
-  'id,title,description,due_date,start_date,frequency,days_of_week,repeat_forever,status,assigned_to,assigned_by,category_id,created_at,updated_at,completed_at,completion_note,completed_by';
+  'id,title,description,due_date,start_date,frequency,days_of_week,repeat_forever,status,assigned_to,assigned_by,category_id,is_personal,created_at,updated_at,completed_at,completion_note,completed_by';
 
 interface LinkRow {
   id: string;
@@ -129,17 +129,33 @@ export function useTasks(profile: Profile | null) {
     return map;
   }, [tasks]);
 
-  /** Tasks visible to the current user under RLS. */
-  const visibleTasks = tasks;
+  /** Tasks visible to the current user under RLS — EXCLUDING other people's
+   *  personal tasks (an admin may still see their own personal tasks). */
+  const visibleTasks = useMemo(
+    () =>
+      tasks.filter(
+        (t) => !t.is_personal || t.assigned_to === profile?.id || (t.assignees ?? []).includes(profile?.id ?? ''),
+      ),
+    [tasks, profile],
+  );
+
+  /** Organization-wide tasks (everything except personal tasks). */
+  const orgTasks = useMemo(() => tasks.filter((t) => !t.is_personal), [tasks]);
 
   /** Tasks assigned to the current user (multiple users per task supported). */
   const myTasks = useMemo(
     () =>
-      tasks.filter(
+      visibleTasks.filter(
         (t) => t.assigned_to === profile?.id || (t.assignees ?? []).includes(profile?.id ?? ''),
       ),
-    [tasks, profile],
+    [visibleTasks, profile],
   );
+
+  /** Assigned ORGANIZATION tasks of the current user (excludes personal ones). */
+  const assignedTasks = useMemo(() => myTasks.filter((t) => !t.is_personal), [myTasks]);
+
+  /** The current user's PERSONAL tasks — private, never counted system-wide. */
+  const personalTasks = useMemo(() => myTasks.filter((t) => !!t.is_personal), [myTasks]);
 
   /** Effective (derived) status right now: completed | pending | overdue. */
   const statusOf = useCallback((t: Task) => resolveTaskStatus(t), []);
@@ -151,8 +167,8 @@ export function useTasks(profile: Profile | null) {
       pending: list.filter((t) => statusOf(t) === 'pending').length,
       overdue: list.filter((t) => statusOf(t) === 'overdue').length,
     });
-    return { mine: count(myTasks), all: count(visibleTasks) };
-  }, [myTasks, visibleTasks, statusOf]);
+    return { mine: count(assignedTasks), all: count(orgTasks), personal: count(personalTasks) };
+  }, [assignedTasks, orgTasks, personalTasks, statusOf]);
 
   // ---------- Mutations ----------
 
@@ -192,8 +208,12 @@ export function useTasks(profile: Profile | null) {
     assigned_to: string;
     assignees?: string[];
     links?: { label: string; url: string }[];
+    /** Personal task → only visible to its owner, never counted system-wide. */
+    is_personal?: boolean;
   }) => {
-    const assignees = dedupe([input.assigned_to, ...(input.assignees ?? [])].filter(Boolean));
+    let assignees = dedupe([input.assigned_to, ...(input.assignees ?? [])].filter(Boolean));
+    // Personal tasks belong exclusively to their creator/owner.
+    if (input.is_personal && profile?.id) assignees = [profile.id];
     if (assignees.length === 0) return { error: 'Select at least one assignee.' };
 
     const frequency = input.frequency ?? 'one-time';
@@ -211,6 +231,7 @@ export function useTasks(profile: Profile | null) {
       assigned_to: assignees[0],
       assigned_by: profile?.id ?? null,
       category_id: input.category_id || null,
+      is_personal: !!input.is_personal,
     };
 
     const { data, error: err } = await supabase
@@ -272,12 +293,22 @@ export function useTasks(profile: Profile | null) {
   };
 
   /**
-   * Mark a task complete. Assigned users must explicitly acknowledge that they
-   * are held responsible and liable once they certify a task as completed.
+   * Mark a task complete. ONLY users actually assigned to the task may do it —
+   * and they must explicitly acknowledge that they are held responsible and
+   * liable once they certify a task as completed. Admins who are not assignees
+   * cannot certify completion here (they can still edit/reopen in Task Mgmt).
    */
   const completeTask = async (id: string, ack: { acknowledged: boolean; note?: string }) => {
     if (!ack.acknowledged) {
       return { error: 'You must acknowledge responsibility before marking a task complete.' };
+    }
+    const target = tasks.find((x) => x.id === id);
+    if (target && profile?.id) {
+      const isAssignee =
+        target.assigned_to === profile.id || (target.assignees ?? []).includes(profile.id);
+      if (!isAssignee) {
+        return { error: 'Only users assigned to this task can mark it as complete.' };
+      }
     }
     const { error: err } = await supabase
       .from('tasks')
@@ -353,7 +384,10 @@ export function useTasks(profile: Profile | null) {
 
   return {
     tasks: visibleTasks,
+    orgTasks,
     myTasks,
+    assignedTasks,
+    personalTasks,
     profiles,
     categories,
     links,

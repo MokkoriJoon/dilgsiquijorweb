@@ -231,6 +231,8 @@ export default function AppLayout() {
                 notifications={notif.notifications}
                 unreadCount={notif.unreadCount}
                 markAllRead={notif.markAllRead}
+                markRead={notif.markRead}
+                isRead={notif.isRead}
                 dismiss={notif.dismiss}
                 clearAll={notif.clearAll}
               />

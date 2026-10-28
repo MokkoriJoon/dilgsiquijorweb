@@ -2,9 +2,38 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Shield, Mail, Lock, ArrowLeft, Loader2 } from 'lucide-react';
+import { useSiteBranding } from '../lib/siteSettings';
+
+/** Renders the site logo: the uploaded image when configured, DILG badge otherwise. */
+export function BrandLogo({ size = 56 }: { size?: number }) {
+  const { branding } = useSiteBranding();
+  return (
+    <div
+      className="rounded-full bg-white flex items-center justify-center shadow-md flex-shrink-0 overflow-hidden"
+      style={{ width: size, height: size }}
+    >
+      {branding.logoUrl ? (
+        <img
+          src={branding.logoUrl}
+          alt="Logo"
+          className="w-full h-full object-contain"
+          onError={(e) => {
+            // Broken logo URL → fall back to the DILG badge instead of an empty circle.
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <div className="rounded-full bg-blue-900 flex items-center justify-center" style={{ width: size - 8, height: size - 8 }}>
+          <span className="text-white font-bold text-[10px]">DILG</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Login() {
   const navigate = useNavigate();
+  const { branding } = useSiteBranding();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -91,16 +120,10 @@ export default function Login() {
       <header className="bg-blue-900 shadow-lg" style={{ minHeight: '80px' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center">
           <Link to="/" className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-white flex items-center justify-center shadow-md flex-shrink-0">
-              <div className="w-12 h-12 rounded-full bg-blue-900 flex items-center justify-center">
-                <span className="text-white font-bold text-xs">DILG</span>
-              </div>
-            </div>
+            <BrandLogo />
             <div className="hidden sm:block">
-              <h1 className="text-white font-bold text-xl tracking-wide">D.E.N.N.I.S</h1>
-              <p className="text-blue-200 text-xs leading-tight">
-                DILG Employee Navigation & Notices Information System
-              </p>
+              <h1 className="text-white font-bold text-xl tracking-wide">{branding.name}</h1>
+              <p className="text-blue-200 text-xs leading-tight">{branding.description}</p>
             </div>
           </Link>
         </div>
@@ -116,7 +139,9 @@ export default function Login() {
                 <Shield className="text-blue-600" size={32} />
               </div>
               <h2 className="text-2xl font-bold text-gray-800">Staff Login</h2>
-              <p className="text-gray-500 text-sm mt-1">Sign in to access the dashboard</p>
+              <p className="text-gray-500 text-sm mt-1">
+                Sign in to {branding.name} — {branding.description}
+              </p>
             </div>
 
             {/* Reset Password Success */}

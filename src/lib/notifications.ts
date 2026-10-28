@@ -25,10 +25,26 @@ export interface AppNotification {
   createdAt: number;
 }
 
-const DISMISSED_KEY = 'dennis_notif_dismissed_v1'; // ids the user cleared
-const READ_KEY = 'dennis_notif_read_v1'; // ids already seen
-const PUSHED_KEY = 'dennis_notif_pushed_v1'; // ids already sent as browser push
+const DISMISSED_KEY = 'dennis_notif_dismissed_v2'; // ids the user cleared
+const READ_KEY = 'dennis_notif_read_v2'; // ids already seen (clicked / marked read)
+const PUSHED_KEY = 'dennis_notif_pushed_v2'; // ids already sent as browser push
+/**
+ * Per-task "seen" markers — `task:<taskId>` entries stored inside READ_KEY.
+ * Notification ids contain the day they were generated (`kind:taskId|d=YYYY-MM-DD`),
+ * so an unread overdue reminder regenerates with a NEW id every day and used to
+ * count as "new" again even after being clicked or "Mark all as read".
+ * These task-level markers make the read state stick for the whole task, so only
+ * genuinely new, never-clicked notifications are ever counted.
+ */
+const LEGACY_READ_KEY = 'dennis_notif_read_v1';
+const LEGACY_CLICKED_KEY = 'dennis_notif_clicked_v1';
+const LEGACY_DISMISSED_KEY = 'dennis_notif_dismissed_v1';
 const DAY_MS = 86_400_000;
+
+/** Storage key that marks a task's notifications as already seen by the user. */
+export function taskSeenKey(taskId: string): string {
+  return `task:${taskId}`;
+}
 
 function loadSet(key: string): Set<string> {
   try {
@@ -40,16 +56,39 @@ function loadSet(key: string): Set<string> {
 
 function saveSet(key: string, ids: Set<string>) {
   try {
-    // Keep storage small: only remember the last 30 days of ids.
+    // Keep storage small: only remember the last 30 days of dated ids.
+    // Undated markers (task:<uuid> "seen" flags) are ALWAYS kept — they are
+    // what makes a clicked / read notification stay read forever, even when
+    // the same event regenerates with a fresh day-based id tomorrow.
     const cutoff = Date.now() - 30 * DAY_MS;
     const arr = Array.from(ids).filter((id) => {
+      if (!id.includes('|t=')) return true; // permanent marker (task-seen etc.)
       const ts = Number(id.split('|t=')[1] ?? 0);
       return !ts || ts >= cutoff;
     });
-    localStorage.setItem(key, JSON.stringify(arr.slice(-500)));
+    localStorage.setItem(key, JSON.stringify(arr));
   } catch {
     /* storage unavailable — ignore */
   }
+}
+
+/** Merge previously-stored (v1) read/clicked/dismissed ids so old state sticks. */
+function loadReadWithLegacy(): Set<string> {
+  const next = loadSet(READ_KEY);
+  try {
+    loadSet(LEGACY_READ_KEY).forEach((id) => next.add(id));
+    loadSet(LEGACY_CLICKED_KEY).forEach((id) => next.add(id));
+    // Legacy per-task click markers were stored as raw uuids in CLICKED_KEY.
+    loadSet(LEGACY_CLICKED_KEY).forEach((id) => {
+      if (!id.includes(':')) next.add(taskSeenKey(id));
+    });
+    localStorage.removeItem(LEGACY_READ_KEY);
+    localStorage.removeItem(LEGACY_CLICKED_KEY);
+    localStorage.removeItem(LEGACY_DISMISSED_KEY);
+  } catch {
+    /* ignore */
+  }
+  return next;
 }
 
 /**
@@ -165,7 +204,9 @@ export function pushBrowserNotification(n: AppNotification) {
  */
 export function useNotifications(profile: Profile | null, tasks: Task[]) {
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadSet(DISMISSED_KEY));
-  const [readIds, setReadIds] = useState<Set<string>>(() => loadSet(READ_KEY));
+  // Read ids are seeded with everything the user previously clicked/marked,
+  // so a notification never counts as "new" again after it was seen once.
+  const [readIds, setReadIds] = useState<Set<string>>(loadReadWithLegacy);
 
   const all = useMemo(
     () => (profile ? buildNotifications(tasks, profile.id) : []),
@@ -174,9 +215,43 @@ export function useNotifications(profile: Profile | null, tasks: Task[]) {
 
   const visible = useMemo(() => all.filter((n) => !dismissed.has(n.id)), [all, dismissed]);
 
+  /**
+   * A notification counts as NEW only if BOTH conditions hold:
+   *   1. its exact id was never marked read/dismissed, AND
+   *   2. the underlying task was never seen before (per-task `task:<id>`
+   *      marker). The second rule is what fixes the bug where daily overdue /
+   *      due-soon reminders regenerated with a fresh day-based id and were
+   *      counted as new again even after being clicked or "Mark all as read".
+   */
+  const isRead = useCallback(
+    (id: string, taskId?: string) => readIds.has(id) || (!!taskId && readIds.has(taskSeenKey(taskId))),
+    [readIds],
+  );
+
+  // Persist read state whenever any known id disappears from the feed (the
+  // event ended OR the item was dismissed/cleared). This guarantees that a
+  // notification is NEVER counted as "new" again once the user has seen it —
+  // clicking it or "Mark all as read" sticks for good.
+  useEffect(() => {
+    const current = new Set(visible.map((n) => n.id));
+    setReadIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      prev.forEach((id) => {
+        if (!current.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      saveSet(READ_KEY, next);
+      return next;
+    });
+  }, [visible]);
+
   const unreadCount = useMemo(
-    () => visible.filter((n) => !readIds.has(n.id)).length,
-    [visible, readIds],
+    () => visible.filter((n) => !isRead(n.id, n.taskId)).length,
+    [visible, isRead],
   );
 
   // Fire browser push notifications for brand-new items.
@@ -187,26 +262,66 @@ export function useNotifications(profile: Profile | null, tasks: Task[]) {
     });
   }, [visible]);
 
+  /** Add ids/markers to the read set and persist them. */
+  const addRead = useCallback((ids: string[]) => {
+    setReadIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      ids.forEach((id) => {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      saveSet(READ_KEY, next);
+      return next;
+    });
+  }, []);
+
   const markAllRead = useCallback(() => {
-    const next = new Set([...readIds, ...visible.map((n) => n.id)]);
-    setReadIds(next);
-    saveSet(READ_KEY, next);
-  }, [readIds, visible]);
+    const ids: string[] = [];
+    visible.forEach((n) => ids.push(n.id, taskSeenKey(n.taskId)));
+    addRead(ids);
+  }, [visible, addRead]);
+
+  /**
+   * Mark a single notification as read (used when the user clicks it).
+   * Also stores a per-task marker so the same event can never count as new
+   * again tomorrow under a fresh day-based id.
+   */
+  const markRead = useCallback(
+    (id: string, taskId?: string) => {
+      addRead(taskId ? [id, taskSeenKey(taskId)] : [id]);
+    },
+    [addRead],
+  );
 
   const dismiss = useCallback(
-    (id: string) => {
-      const next = new Set([...dismissed, id]);
-      setDismissed(next);
-      saveSet(DISMISSED_KEY, next);
+    (id: string, taskId?: string) => {
+      // A dismissed item also stops counting as new — permanently.
+      addRead(taskId ? [id, taskSeenKey(taskId)] : [id]);
+      setDismissed((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        saveSet(DISMISSED_KEY, next);
+        return next;
+      });
     },
-    [dismissed],
+    [dismissed, addRead],
   );
 
   const clearAll = useCallback(() => {
-    const next = new Set([...dismissed, ...visible.map((n) => n.id)]);
-    setDismissed(next);
-    saveSet(DISMISSED_KEY, next);
-  }, [dismissed, visible]);
+    const ids: string[] = [];
+    visible.forEach((n) => ids.push(n.id, taskSeenKey(n.taskId)));
+    addRead(ids);
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      visible.forEach((n) => next.add(n.id));
+      saveSet(DISMISSED_KEY, next);
+      return next;
+    });
+  }, [visible, addRead]);
 
-  return { notifications: visible, unreadCount, markAllRead, dismiss, clearAll };
+  return { notifications: visible, unreadCount, markAllRead, markRead, isRead, dismiss, clearAll };
 }

@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
+import { useSiteBranding } from '../lib/siteSettings';
+import { BrandLogo } from './Login';
 
 export default function Register() {
   const navigate = useNavigate();
+  const { branding } = useSiteBranding();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -111,16 +114,10 @@ export default function Register() {
       <header className="bg-blue-900 shadow-lg" style={{ minHeight: '80px' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center">
           <Link to="/" className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-white flex items-center justify-center shadow-md flex-shrink-0">
-              <div className="w-12 h-12 rounded-full bg-blue-900 flex items-center justify-center">
-                <span className="text-white font-bold text-xs">DILG</span>
-              </div>
-            </div>
+            <BrandLogo />
             <div className="hidden sm:block">
-              <h1 className="text-white font-bold text-xl tracking-wide">D.E.N.N.I.S</h1>
-              <p className="text-blue-200 text-xs leading-tight">
-                DILG Employee Navigation & Notices Information System
-              </p>
+              <h1 className="text-white font-bold text-xl tracking-wide">{branding.name}</h1>
+              <p className="text-blue-200 text-xs leading-tight">{branding.description}</p>
             </div>
           </Link>
         </div>
@@ -136,7 +133,9 @@ export default function Register() {
                 <UserPlus className="text-green-600" size={32} />
               </div>
               <h2 className="text-2xl font-bold text-gray-800">Create Account</h2>
-              <p className="text-gray-500 text-sm mt-1">Register as a DILG staff member</p>
+              <p className="text-gray-500 text-sm mt-1">
+                Register for {branding.name} — {branding.description}
+              </p>
             </div>
 
             {/* Success Message */}

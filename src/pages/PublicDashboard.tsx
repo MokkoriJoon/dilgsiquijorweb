@@ -2,13 +2,13 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  RefreshCw,
   AlertTriangle,
   Clock,
   CalendarClock,
   CheckCircle2,
   Users,
   LogIn,
+  UserPlus,
   Search,
   FolderOpen,
   Folder,
@@ -89,13 +89,14 @@ export default function PublicDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={pub.refetch}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-2 text-sm font-medium"
-              title="Refresh now"
+            {/* NOTE: the manual Refresh button was removed — the board already
+                updates automatically via Supabase Realtime + a 60s poll. */}
+            <Link
+              to="/register"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-green-500 hover:bg-green-400 text-blue-950 px-3 py-2 text-sm font-bold"
             >
-              <RefreshCw size={14} className={pub.loading ? 'animate-spin' : ''} /> Refresh
-            </button>
+              <UserPlus size={14} /> Sign Up
+            </Link>
             <Link
               to="/login"
               className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-blue-950 px-3 py-2 text-sm font-bold"
