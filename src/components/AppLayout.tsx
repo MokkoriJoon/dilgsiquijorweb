@@ -17,6 +17,7 @@ import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { useNotifications } from '../lib/notifications';
 import NotificationBell from './NotificationBell';
+import ProfileModal from './ProfileModal';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { useSiteBranding } from '../lib/siteSettings';
 
@@ -30,6 +31,7 @@ export default function AppLayout() {
   const { branding } = useSiteBranding();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   // Free notification system: derive alerts from the user's own tasks.
   const t = useTasks(profile ?? null);
@@ -104,9 +106,17 @@ export default function AppLayout() {
         </div>
       </div>
 
-      {/* User card */}
+      {/* User card — click to view profile details */}
       <div className="px-4 py-4 border-b border-slate-700/60">
-        <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            setProfileOpen(true);
+            setMobileOpen(false);
+          }}
+          title="View my profile"
+          className="w-full flex items-center gap-3 rounded-lg p-1 -m-1 text-left hover:bg-slate-700/50 transition-colors"
+        >
           <div className="w-10 h-10 rounded-full bg-blue-700 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
             {initials}
           </div>
@@ -120,7 +130,7 @@ export default function AppLayout() {
               {ROLE_LABELS[role]}
             </span>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Menu */}
@@ -225,13 +235,23 @@ export default function AppLayout() {
                 clearAll={notif.clearAll}
               />
               <span
-                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[role]}`}
+                className={`hidden sm:inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[role]}`}
               >
                 {ROLE_LABELS[role]}
               </span>
-              <span className="text-sm text-gray-600 hidden sm:block truncate max-w-[220px]">
-                {profile.email}
-              </span>
+              <button
+                type="button"
+                onClick={() => setProfileOpen(true)}
+                title="View my profile"
+                className="flex items-center gap-2 rounded-full border border-gray-200 pl-1 pr-3 py-1 hover:bg-gray-50 transition-colors"
+              >
+                <span className="w-8 h-8 rounded-full bg-blue-700 text-white flex items-center justify-center text-xs font-semibold flex-shrink-0">
+                  {initials}
+                </span>
+                <span className="text-sm text-gray-600 hidden md:block truncate max-w-[160px]">
+                  {profile.full_name?.split(' ')[0] ?? 'Profile'}
+                </span>
+              </button>
             </div>
           </div>
         </header>
@@ -240,10 +260,13 @@ export default function AppLayout() {
           <Outlet context={{ profile, isAdminOrAbove }} />
         </main>
 
-        <footer className="px-6 py-4 text-center text-xs text-gray-400 border-t border-gray-100 bg-white">
+        {/* Footer — always stuck at the bottom (mt-auto inside the flex column) */}
+        <footer className="mt-auto px-6 py-4 text-center text-xs text-gray-400 border-t border-gray-100 bg-white">
           {branding.footerText}
         </footer>
       </div>
+
+      {profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} />}
     </div>
   );
 }

@@ -11,12 +11,14 @@ import {
   Users,
   LogIn,
   Search,
+  FolderOpen,
+  Folder,
 } from 'lucide-react';
 import { usePublicDashboard } from '../lib/usePublicDashboard';
 import { useSiteBranding } from '../lib/siteSettings';
-import { STATUS_META } from '../lib/taskMeta';
+import { STATUS_META, FREQUENCY_OPTIONS, frequencyLabel } from '../lib/taskMeta';
 import { formatDueDate } from '../lib/useTasks';
-import type { Task } from '../lib/types';
+import type { Task, TaskFrequency } from '../lib/types';
 
 /**
  * Public Viewing Dashboard — NO login required.
@@ -55,7 +57,9 @@ export default function PublicDashboard() {
   const completedCount = pub.stats.completed;
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    // Sticky-footer layout: flex column, main grows, footer sits at the bottom
+    // even when there is little content (it no longer "floats" mid-screen).
+    <div className="min-h-screen flex flex-col bg-slate-100">
       {/* Header */}
       <header className="bg-blue-900 text-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-wrap items-center justify-between gap-4">
@@ -94,7 +98,7 @@ export default function PublicDashboard() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {pub.error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-6 text-sm text-red-700 flex items-center gap-2">
             <AlertTriangle size={15} /> Could not load tasks ({pub.error}). Make sure the Supabase
@@ -175,9 +179,14 @@ export default function PublicDashboard() {
             )}
           </div>
         )}
+
+        {/* Folder-style frequency browser — pick a frequency "folder" to see
+            every task that repeats on it (resource links are NOT shown). */}
+        <FrequencyBrowser tasks={pub.tasks} statusOf={pub.statusOf} />
       </main>
 
-      <footer className="border-t border-gray-200 bg-white py-4 text-center text-xs text-gray-400">
+      {/* Footer — pinned to the bottom by the flex layout above */}
+      <footer className="mt-auto border-t border-gray-200 bg-white py-4 text-center text-xs text-gray-400">
         {branding.footerText} · Public viewing dashboard (read-only)
       </footer>
     </div>
@@ -203,7 +212,7 @@ function SummaryCard({
   label: string;
   value: number;
   tone: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }) {
   return (
     <div className={`${tone} text-white rounded-xl p-4 flex items-center justify-between shadow`}>
