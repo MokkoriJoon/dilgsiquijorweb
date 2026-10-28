@@ -33,7 +33,12 @@ export function useTasks(profile: Profile | null) {
     const [tasksRes, profilesRes, catsRes, linksRes, assignsRes] = await Promise.all([
       supabase.from('tasks').select(TASK_SELECT).order('created_at', { ascending: false }),
       supabase.from('profiles').select('*').order('full_name'),
-      supabase.from('task_categories').select('*').order('name'),
+      // Personal categories carry is_personal/owner_id; RLS (schema.sql) only
+      // returns them to their owner, so other users never see or count them.
+      supabase
+        .from('task_categories')
+        .select('id,name,color,description,created_by,is_personal,owner_id,created_at')
+        .order('name'),
       supabase.from('task_links').select('*').order('label'),
       supabase.from('task_assignments').select('task_id,user_id'),
     ]);
@@ -157,6 +162,34 @@ export function useTasks(profile: Profile | null) {
 
   /** The current user's PERSONAL tasks — private, never counted system-wide. */
   const personalTasks = useMemo(() => myTasks.filter((t) => !!t.is_personal), [myTasks]);
+
+  // ---------- Categories (organization vs personal) ----------
+
+  /** True when a category row belongs to the current user personally. */
+  const isOwnPersonalCategory = useCallback(
+    (c: TaskCategory) => !!c.is_personal && c.owner_id === profile?.id,
+    [profile?.id],
+  );
+
+  /** ORGANIZATION categories only — what admins manage & what is counted
+   *  system-wide. Personal categories are NEVER included here. */
+  const orgCategories = useMemo(
+    () => categories.filter((c) => !c.is_personal || !c.owner_id || c.owner_id === profile?.id ? !c.is_personal : false),
+    [categories, profile?.id],
+  );
+
+  /** The current user's OWN personal categories (private). */
+  const personalCategories = useMemo(
+    () => categories.filter(isOwnPersonalCategory),
+    [categories, isOwnPersonalCategory],
+  );
+
+  /** Categories usable by the current user: organization + own personal ones.
+   *  Other people's personal categories are invisible/unselectable. */
+  const categoriesForTasks = useMemo(
+    () => categories.filter((c) => !c.is_personal || isOwnPersonalCategory(c)),
+    [categories, isOwnPersonalCategory],
+  );
 
   /** Effective (derived) status right now: completed | pending | overdue. */
   const statusOf = useCallback((t: Task) => resolveTaskStatus(t), []);
