@@ -7,7 +7,6 @@ import {
   Clock,
   CalendarClock,
   CheckCircle2,
-  ExternalLink,
   Users,
   LogIn,
   Search,
@@ -66,7 +65,16 @@ export default function PublicDashboard() {
           <div className="flex items-center gap-4 min-w-0">
             <div className="w-14 h-14 rounded-full bg-white p-1.5 flex-shrink-0 overflow-hidden shadow">
               {branding.logoUrl ? (
-                <img src={branding.logoUrl} alt="Logo" className="w-full h-full object-contain" />
+                <img
+                  src={branding.logoUrl}
+                  alt="Logo"
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    // Broken logo URL → fall back to the DILG badge instead of
+                    // leaving an empty white circle.
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                  }}
+                />
               ) : (
                 <div className="w-full h-full rounded-full bg-blue-900 flex items-center justify-center">
                   <span className="text-white font-bold text-[10px]">DILG</span>
@@ -289,26 +297,134 @@ function Bucket({
                   .join(', ') || 'Unassigned'}
                 {(t.assignee_profiles?.length ?? 0) > 3 && ` +${t.assignee_profiles!.length - 3}`}
               </p>
-              {(t.links?.length ?? 0) > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {t.links!.map((l) => (
-                    <a
-                      key={l.id}
-                      href={l.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
-                    >
-                      <ExternalLink size={10} />
-                      {l.label}
-                    </a>
-                  ))}
-                </div>
-              )}
             </div>
           );
         })}
       </div>
+    </section>
+  );
+}
+
+/**
+ * Folder-style frequency browser shown at the bottom of the public board.
+ * Each frequency is a "folder"; clicking it lists every task that repeats on
+ * that cadence — WITHOUT any resource links (public viewers can't open them).
+ */
+function FrequencyBrowser({
+  tasks,
+  statusOf,
+}: {
+  tasks: Task[];
+  statusOf: (t: Task) => 'completed' | 'pending' | 'overdue';
+}) {
+  const [selected, setSelected] = useState<TaskFrequency | null>(null);
+
+  const grouped = useMemo(() => {
+    const map = new Map<TaskFrequency, Task[]>();
+    FREQUENCY_OPTIONS.forEach((f) => map.set(f, []));
+    tasks.forEach((t) => {
+      const f = (t.frequency ?? 'one-time') as TaskFrequency;
+      if (!map.has(f)) map.set(f, []);
+      map.get(f)!.push(t);
+    });
+    return map;
+  }, [tasks]);
+
+  const selectedTasks = selected ? grouped.get(selected) ?? [] : [];
+
+  return (
+    <section className="mt-10">
+      <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700 border-l-4 border-indigo-500 pl-3 mb-3">
+        Browse tasks by frequency
+      </h2>
+
+      {/* Folder tabs */}
+      <div className="flex flex-wrap gap-2">
+        {FREQUENCY_OPTIONS.map((f) => {
+          const count = grouped.get(f)?.length ?? 0;
+          const active = selected === f;
+          return (
+            <button
+              key={f}
+              onClick={() => setSelected(active ? null : f)}
+              disabled={count === 0}
+              title={count === 0 ? 'No tasks in this folder' : `Show all ${frequencyLabel(f)} tasks`}
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition
+                ${
+                  active
+                    ? 'bg-indigo-600 border-indigo-600 text-white shadow'
+                    : count === 0
+                      ? 'bg-gray-50 border-gray-200 text-gray-300 cursor-not-allowed'
+                      : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'
+                }`}
+            >
+              {active ? <FolderOpen size={16} /> : <Folder size={16} />}
+              {frequencyLabel(f)}
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                  active ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-700'
+                }`}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Selected folder contents */}
+      {selected ? (
+        selectedTasks.length === 0 ? (
+          <p className="mt-4 text-sm text-gray-500">This folder is empty.</p>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {selectedTasks.map((t) => {
+              const st = statusOf(t);
+              const meta = STATUS_META[st];
+              return (
+                <div
+                  key={t.id}
+                  className="bg-white rounded-xl border border-gray-100 shadow-sm p-4"
+                >
+                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.cls}`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+                        {meta.label}
+                      </span>
+                      {t.category && (
+                        <span
+                          className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                          style={{
+                            color: t.category.color ?? '#64748b',
+                            backgroundColor: `${t.category.color ?? '#64748b'}18`,
+                          }}
+                        >
+                          {t.category.name}
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm leading-snug">{t.title}</h3>
+                    <p className="text-xs text-gray-500 mt-1">Due: {formatDueDate(t.due_date)}</p>
+                    <p className="text-xs text-gray-600 mt-2 flex items-center gap-1">
+                      <Users size={12} className="text-gray-400" />
+                      {(t.assignee_profiles ?? [])
+                        .map((p) => p.full_name ?? 'Staff')
+                        .slice(0, 3)
+                        .join(', ') || 'Unassigned'}
+                      {(t.assignee_profiles?.length ?? 0) > 3 && ` +${t.assignee_profiles!.length - 3}`}
+                    </p>
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <p className="mt-4 text-sm text-gray-500">
+          Select a frequency folder above to view all tasks that repeat on that schedule.
+        </p>
+      )}
     </section>
   );
 }

@@ -4,6 +4,7 @@ import { Plus, Tags, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { CATEGORY_COLORS, DEFAULT_CATEGORIES } from '../lib/taskMeta';
+import { NAMED_CATEGORY_COLORS, colorNameFor } from '../lib/categoryColors';
 import type { TaskCategory } from '../lib/types';
 
 interface Ctx {
@@ -122,14 +123,24 @@ export default function Categories() {
               value={color}
               onChange={(e) => setColor(e.target.value)}
               className="sm:col-span-2 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-              title="Badge colour — the swatch shown on the category chip and on tasks in this category (not a number)"
+              title="Badge colour — shown as a real swatch + colour name (no hex codes)"
             >
-              {CATEGORY_COLORS.map((c) => (
-                <option key={c} value={c}>
-                  🎨 {c}
+              {NAMED_CATEGORY_COLORS.map((c) => (
+                <option key={c.hex} value={c.hex}>
+                  {c.name}
                 </option>
               ))}
             </select>
+            {/* Live swatch so the picker shows the actual colour, not a code */}
+            <span
+              className="sm:col-span-1 inline-flex items-center justify-center rounded-lg border border-gray-200"
+              title={`Selected colour: ${colorNameFor(color)}`}
+            >
+              <span
+                className="w-6 h-6 rounded-md"
+                style={{ backgroundColor: color }}
+              />
+            </span>
             <button
               onClick={add}
               disabled={busy}
