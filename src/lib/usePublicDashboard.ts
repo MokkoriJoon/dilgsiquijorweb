@@ -25,6 +25,8 @@ export function usePublicDashboard() {
 
     const [tasksRes, profilesRes, catsRes, linksRes, assignsRes] = await Promise.all([
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+      // Only the public fields the board actually needs — works even with
+      // stricter profile RLS and never blocks the whole dashboard.
       supabase.from('profiles').select('id,full_name,email,position,role'),
       supabase.from('task_categories').select('*').order('name'),
       supabase.from('task_links').select('*'),
@@ -32,6 +34,7 @@ export function usePublicDashboard() {
     ]);
 
     if (tasksRes.error) setError(friendlyDbError(tasksRes.error.message));
+    else setError(null);
 
     const pmap = new Map<string, Profile>();
     ((profilesRes.data ?? []) as Profile[]).forEach((p) => pmap.set(p.id, p));

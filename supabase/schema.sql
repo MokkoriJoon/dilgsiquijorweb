@@ -204,8 +204,11 @@ ALTER TABLE public.bookmarks       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.site_settings   ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Categories viewable by authenticated" ON public.task_categories;
-CREATE POLICY "Categories viewable by authenticated"
-  ON public.task_categories FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Categories publicly readable" ON public.task_categories;
+CREATE POLICY "Categories publicly readable"
+  ON public.task_categories FOR SELECT
+  TO public
+  USING (true);
 DROP POLICY IF EXISTS "Admins manage categories" ON public.task_categories;
 CREATE POLICY "Admins manage categories"
   ON public.task_categories FOR ALL TO authenticated
@@ -213,8 +216,11 @@ CREATE POLICY "Admins manage categories"
   WITH CHECK (public.get_current_role() IN ('ADMIN','SUPER_ADMIN'));
 
 DROP POLICY IF EXISTS "Links viewable by authenticated" ON public.task_links;
-CREATE POLICY "Links viewable by authenticated"
-  ON public.task_links FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Links publicly readable" ON public.task_links;
+CREATE POLICY "Links publicly readable"
+  ON public.task_links FOR SELECT
+  TO public
+  USING (true);
 DROP POLICY IF EXISTS "Task managers can edit links" ON public.task_links;
 CREATE POLICY "Task managers can edit links"
   ON public.task_links FOR ALL TO authenticated
@@ -230,8 +236,11 @@ CREATE POLICY "Task managers can edit links"
   );
 
 DROP POLICY IF EXISTS "Assignments viewable by authenticated" ON public.task_assignments;
-CREATE POLICY "Assignments viewable by authenticated"
-  ON public.task_assignments FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Assignments publicly readable" ON public.task_assignments;
+CREATE POLICY "Assignments publicly readable"
+  ON public.task_assignments FOR SELECT
+  TO public
+  USING (true);
 DROP POLICY IF EXISTS "Task managers can edit assignments" ON public.task_assignments;
 CREATE POLICY "Task managers can edit assignments"
   ON public.task_assignments FOR ALL TO authenticated
@@ -328,10 +337,13 @@ AS $$
 $$;
 
 -- 4) RLS POLICIES — PROFILES
+-- Profiles are readable by everyone so the Public Dashboard can show who is
+-- assigned to each task (name/position only — no sensitive columns exist).
 DROP POLICY IF EXISTS "Profiles are viewable by authenticated users" ON public.profiles;
-CREATE POLICY "Profiles are viewable by authenticated users"
+DROP POLICY IF EXISTS "Profiles publicly readable" ON public.profiles;
+CREATE POLICY "Profiles publicly readable"
   ON public.profiles FOR SELECT
-  TO authenticated
+  TO public
   USING (true);
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
@@ -353,15 +365,16 @@ CREATE POLICY "Super admins manage all profiles"
   WITH CHECK (public.get_current_role() = 'SUPER_ADMIN');
 
 -- 5) RLS POLICIES — TASKS
+-- NOTE: tasks are readable by EVERYONE (anon included):
+--   • the Public Viewing Dashboard at "/" has no login and must show real
+--     counts on any device (previously it silently got 0 rows),
+--   • multi-assignee users rely on task_assignments, not just assigned_to.
 DROP POLICY IF EXISTS "Tasks viewable by assignee or admins" ON public.tasks;
-CREATE POLICY "Tasks viewable by assignee or admins"
+DROP POLICY IF EXISTS "Tasks are publicly readable" ON public.tasks;
+CREATE POLICY "Tasks are publicly readable"
   ON public.tasks FOR SELECT
-  TO authenticated
-  USING (
-    assigned_to = auth.uid()
-    OR assigned_by = auth.uid()
-    OR public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN')
-  );
+  TO public
+  USING (true);
 
 DROP POLICY IF EXISTS "Admins and above can insert tasks" ON public.tasks;
 CREATE POLICY "Admins and above can insert tasks"
