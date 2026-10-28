@@ -1,56 +1,101 @@
 import { ClipboardList, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
 
-const stats = [
-  {
-    title: 'Total Tasks',
-    count: 0,
-    icon: ClipboardList,
-    iconBg: 'bg-blue-100',
-    iconColor: 'text-blue-600',
-  },
-  {
-    title: 'Pending',
-    count: 0,
-    icon: Clock,
-    iconBg: 'bg-amber-100',
-    iconColor: 'text-amber-600',
-  },
-  {
-    title: 'Completed',
-    count: 0,
-    icon: CheckCircle2,
-    iconBg: 'bg-green-100',
-    iconColor: 'text-green-600',
-  },
-  {
-    title: 'Overdue',
-    count: 0,
-    icon: AlertTriangle,
-    iconBg: 'bg-red-100',
-    iconColor: 'text-red-600',
-  },
-];
+export type StatFilter = 'all' | 'pending' | 'completed' | 'overdue';
 
-export default function StatsCards() {
+interface Card {
+  id: StatFilter;
+  title: string;
+  count: number;
+  icon: any;
+  iconBg: string;
+  iconColor: string;
+  ring: string;
+}
+
+/**
+ * Dashboard cards — each card is clickable and filters the task list below.
+ */
+export default function StatsCards({
+  stats,
+  active,
+  onSelect,
+}: {
+  stats: { total: number; pending: number; completed: number; overdue: number };
+  active: StatFilter;
+  onSelect: (f: StatFilter) => void;
+}) {
+  const cards: Card[] = [
+    {
+      id: 'all',
+      title: 'Total Tasks',
+      count: stats.total,
+      icon: ClipboardList,
+      iconBg: 'bg-blue-100',
+      iconColor: 'text-blue-600',
+      ring: 'ring-blue-500',
+    },
+    {
+      id: 'pending',
+      title: 'Pending',
+      count: stats.pending,
+      icon: Clock,
+      iconBg: 'bg-amber-100',
+      iconColor: 'text-amber-600',
+      ring: 'ring-amber-500',
+    },
+    {
+      id: 'completed',
+      title: 'Complete',
+      count: stats.completed,
+      icon: CheckCircle2,
+      iconBg: 'bg-green-100',
+      iconColor: 'text-green-600',
+      ring: 'ring-green-500',
+    },
+    {
+      id: 'overdue',
+      title: 'Overdue',
+      count: stats.overdue,
+      icon: AlertTriangle,
+      iconBg: 'bg-red-100',
+      iconColor: 'text-red-600',
+      ring: 'ring-red-500',
+    },
+  ];
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-      {stats.map((stat) => (
-        <div
-          key={stat.title}
-          className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center justify-between hover:shadow-md transition-shadow"
-        >
-          <div>
-            <p className="text-gray-500 text-sm font-medium">{stat.title}</p>
-            <p className="text-3xl font-bold text-gray-800 mt-1">{stat.count}</p>
-            <button className="text-blue-500 text-xs mt-2 hover:text-blue-700 transition-colors">
-              Click to filter
-            </button>
-          </div>
-          <div className={`${stat.iconBg} p-3 rounded-full`}>
-            <stat.icon className={stat.iconColor} size={24} />
-          </div>
-        </div>
-      ))}
+      {cards.map((card) => {
+        const isActive = active === card.id;
+        return (
+          <button
+            key={card.id}
+            type="button"
+            onClick={() => onSelect(card.id)}
+            aria-pressed={isActive}
+            className={`text-left bg-white rounded-xl border p-5 flex items-center justify-between transition-all hover:shadow-md focus:outline-none ${
+              isActive
+                ? `shadow-md ring-2 ${card.ring} border-transparent`
+                : 'border-gray-100 shadow-sm'
+            }`}
+          >
+            <div>
+              <p className="text-gray-500 text-sm font-medium">{card.title}</p>
+              <p className="text-3xl font-bold text-gray-800 mt-1">{card.count}</p>
+              <p
+                className={`text-xs mt-2 font-medium ${
+                  isActive ? 'text-gray-700' : 'text-blue-500'
+                }`}
+              >
+                {isActive ? 'Filter active · click to reset' : 'Click to filter'}
+              </p>
+            </div>
+            <div className={`${card.iconBg} p-3 rounded-full`}>
+              <card.icon className={card.iconColor} size={24} />
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
