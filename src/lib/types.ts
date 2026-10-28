@@ -1,5 +1,3 @@
-import { supabase } from './supabase';
-
 export type UserRole = 'STANDARD' | 'ADMIN' | 'SUPER_ADMIN';
 
 export const USER_ROLES: UserRole[] = ['STANDARD', 'ADMIN', 'SUPER_ADMIN'];
@@ -59,23 +57,6 @@ export function isAdminOrAbove(role?: UserRole | string | null): boolean {
   return role === 'ADMIN' || role === 'SUPER_ADMIN';
 }
 
-/** The account that must always exist as SUPER_ADMIN (seeded via SQL script). */
-export const PRIMARY_SUPER_ADMIN_EMAIL = 'calibojunfranz@gmail.com';
-
-/**
- * Guarantee the primary account is a SUPER_ADMIN.
- *
- * Runs client-side after sign-in so the promotion also works when the Supabase
- * SQL seed script has not been applied yet (RLS lets a SUPER_ADMIN update every
- * profile, and users can always update their own row).
- */
-export async function ensurePrimarySuperAdmin(userId: string): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user?.email?.toLowerCase() !== PRIMARY_SUPER_ADMIN_EMAIL) return;
-
-  await supabase
-    .from('profiles')
-    .update({ role: 'SUPER_ADMIN', updated_at: new Date().toISOString() })
-    .eq('id', userId)
-    .neq('role', 'SUPER_ADMIN');
-}
+// Role assignment is handled entirely in the database: the FIRST user who
+// registers is automatically assigned SUPER_ADMIN by the handle_new_user()
+// trigger (see supabase/schema.sql, section 3). No client-side bootstrap.

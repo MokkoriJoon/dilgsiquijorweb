@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase';
-import { ensurePrimarySuperAdmin } from './types';
 import type { Profile, UserRole } from './types';
 
 /**
@@ -16,10 +15,9 @@ export function useAuth() {
     let mounted = true;
 
     const loadProfile = async (userId: string) => {
-      // Bootstrap: if the signed-in user is the primary account, guarantee it
-      // has the SUPER_ADMIN role even before the SQL seed script is applied.
-      await ensurePrimarySuperAdmin(userId);
-
+      // NOTE: role assignment happens in the database — the FIRST registered
+      // user is automatically made SUPER_ADMIN by the handle_new_user() trigger
+      // (see supabase/schema.sql). Nothing to bootstrap here.
       const { data } = await supabase
         .from('profiles')
         .select('*')

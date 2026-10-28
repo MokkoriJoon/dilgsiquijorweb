@@ -47,20 +47,38 @@ CREATE TABLE IF NOT EXISTS public.tasks (
 
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 
--- 3) AUTO-CREATE A PROFILE WHEN A USER REGISTERS (default role: STANDARD)
+-- 3) AUTO-CREATE A PROFILE WHEN A USER REGISTERS
+--    The FIRST user to register automatically becomes SUPER_ADMIN.
+--    Every subsequent user gets the role sent by the client (default STANDARD).
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public
 AS $$
+DECLARE
+  v_has_users BOOLEAN;
+  v_role      TEXT;
 BEGIN
+  -- Is there already at least one profile in the system?
+  SELECT EXISTS (SELECT 1 FROM public.profiles LIMIT 1) INTO v_has_users;
+
+  IF NOT v_has_users THEN
+    v_role := 'SUPER_ADMIN';           -- first registered user wins the crown
+  ELSE
+    v_role := COALESCE(NEW.raw_user_meta_data ->> 'role', 'STANDARD');
+  END IF;
+
+  IF v_role NOT IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN') THEN
+    v_role := 'STANDARD';
+  END IF;
+
   INSERT INTO public.profiles (id, full_name, email, position, role)
   VALUES (
     NEW.id,
     NEW.raw_user_meta_data ->> 'full_name',
     NEW.email,
     NEW.raw_user_meta_data ->> 'position',
-    COALESCE(NEW.raw_user_meta_data ->> 'role', 'STANDARD')
+    v_role
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
@@ -140,51 +158,17 @@ CREATE POLICY "Admins and above can delete tasks"
   TO authenticated
   USING (public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN'));
 
--- 6) SEED: calibojunfranz@gmail.com → Junfranz Rock C. Calibo as SUPER_ADMIN
+-- 6) WIPE ALL REGISTERED USERS (fresh start)
 -- ---------------------------------------------------------------------
--- CASE A: the account ALREADY exists in Auth → promote it now.
-UPDATE public.profiles
-   SET full_name = 'Junfranz Rock C. Calibo',
-       role      = 'SUPER_ADMIN',
-       updated_at = NOW()
- WHERE email = 'calibojunfranz@gmail.com';
-
--- CASE B: the account does NOT exist yet → create it directly (dev bootstrap).
--- Initial password is "ChangeMe123!" — sign in and change it immediately.
-DO $$
-DECLARE
-  v_user_id UUID;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM auth.users WHERE email = 'calibojunfranz@gmail.com') THEN
-    v_user_id := gen_random_uuid();
-
-    INSERT INTO auth.users (
-      instance_id, id, aud, role, email, encrypted_password,
-      email_confirmed_at, last_sign_in_at,
-      raw_app_meta_data, raw_user_meta_data,
-      created_at, updated_at,
-      confirmation_token, email_change, email_change_token_new, recovery_token
-    ) VALUES (
-      'production', v_user_id, 'authenticated', 'authenticated',
-      'calibojunfranz@gmail.com',
-      crypt('ChangeMe123!', gen_salt('bf')),
-      NOW(), NOW(),
-      '{"provider":"email","providers":["email"]}',
-      '{"full_name":"Junfranz Rock C. Calibo"}',
-      NOW(), NOW(),
-      '', '', '', ''
-    );
-
-    INSERT INTO public.profiles (id, full_name, email, role)
-    VALUES (v_user_id, 'Junfranz Rock C. Calibo', 'calibojunfranz@gmail.com', 'SUPER_ADMIN')
-    ON CONFLICT (id) DO UPDATE
-      SET full_name = EXCLUDED.full_name, role = 'SUPER_ADMIN';
-
-    RAISE NOTICE 'Seeded SUPER_ADMIN calibojunfranz@gmail.com with password ChangeMe123! — CHANGE IT IMMEDIATELY.';
-  ELSE
-    RAISE NOTICE 'User calibojunfranz@gmail.com already exists — promoted to SUPER_ADMIN via the UPDATE above.';
-  END IF;
-END $$;
+-- Deletes every account: auth users + profiles + tasks. The ON DELETE CASCADE
+-- foreign keys take care of child rows automatically.
+-- AFTER running this, sign out of the app and register again — the FIRST user
+-- to register is automatically assigned the SUPER_ADMIN role (see trigger in
+-- section 3). Do NOT re-run this script afterwards or you will erase your
+-- new Super Admin account too.
+DELETE FROM auth.users;   -- cascades to public.profiles and public.tasks
+DELETE FROM public.profiles;  -- safety net for orphaned profile rows
+DELETE FROM public.tasks;     -- safety net for orphaned task rows
 
 -- 7) SECURITY DEFINER RPC: allow a SUPER_ADMIN to create new users from the app
 --    (bypasses the need for service-role keys on the client).
