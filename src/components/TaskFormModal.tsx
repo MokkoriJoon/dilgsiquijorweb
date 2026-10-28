@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useAuth } from '../lib/useAuth';
 import { supabase } from '../lib/supabase';
 import type { Task, TaskCategory } from '../lib/types';
+import { isAdminOrAbove as isAdminRole } from '../lib/types';
 import { STATUS_META, CATEGORY_COLORS } from '../lib/taskMeta';
 import { describeRecurrence } from '../lib/recurrence';
 import {
@@ -13,15 +13,25 @@ import {
   CheckCircle2,
   AlertTriangle,
   Save,
+  Lock,
+  User,
+  Users,
 } from 'lucide-react';
 
 /**
- * Shared create/edit form for tasks — used by "Task Management" (global edit)
- * and by the task-assignment flow in My Tasks.
+ * Shared create/edit form for tasks — used by "Task Management" (global edit),
+ * the Dashboard, and the Personal-Tasks flow in My Tasks.
  *
- * Supports: category selection + inline category creation (admins & superadmin),
- * multiple assignees, recurrence rules (with weekday picker for Daily),
- * clickable resource links, and Complete/Pending status.
+ * Supports: category selection + inline category creation, multiple assignees,
+ * recurrence rules (with weekday picker for Daily), clickable resource links,
+ * Complete/Pending status, and PERSONAL tasks (private to their owner and never
+ * counted in the organization-wide totals).
+ *
+ * Role rules enforced here (mirrored by RLS in supabase/schema.sql):
+ *  • Only Admins / Super Admins may create ORGANIZATION ("system") tasks and
+ *    assign them to other staff members.
+ *  • Standard users may only add/edit their own personal tasks.
+ *  • Inline category creation ("New category" → Add) is admin-only.
  */
 
 export interface TaskDraft {
@@ -35,6 +45,8 @@ export interface TaskDraft {
   assignees: string[];
   links: { label: string; url: string }[];
   status: 'pending' | 'completed';
+  /** Private, personal-to-owner task — excluded from all system counts. */
+  is_personal: boolean;
 }
 
 const WEEKDAYS = [
@@ -47,7 +59,7 @@ const WEEKDAYS = [
   { idx: 6, label: 'Sun' },
 ];
 
-export function emptyDraft(userId?: string): TaskDraft {
+export function emptyDraft(userId?: string, isPersonal = false): TaskDraft {
   return {
     title: '',
     description: '',
@@ -56,9 +68,11 @@ export function emptyDraft(userId?: string): TaskDraft {
     days_of_week: [0, 1, 2, 3, 4],
     repeat_forever: true,
     category_id: '',
+    // Personal tasks always belong to their owner only.
     assignees: userId ? [userId] : [],
     links: [],
     status: 'pending',
+    is_personal: isPersonal,
   };
 }
 
@@ -82,6 +96,7 @@ export function draftFromTask(task: Task): TaskDraft {
           : [],
     links: (task.links ?? []).map((l) => ({ label: l.label, url: l.url })),
     status: task.status === 'completed' ? 'completed' : 'pending',
+    is_personal: !!task.is_personal,
   };
 }
 
@@ -95,6 +110,14 @@ interface Props {
   onCategoryCreated?: (cat: TaskCategory) => void;
   /** When false the user may only complete/reopen their own task (no global edit). */
   canEditDetails?: boolean;
+  /** Role of the current user — Standard users cannot create organization tasks. */
+  role?: string | null;
+  /** The logged-in user's id (used to pre-fill / lock personal-task assignees). */
+  currentUserId?: string;
+  /** Force the form into "personal task" mode when creating a new task. */
+  defaultPersonal?: boolean;
+  /** Hide the personal/system toggle (e.g. inside the Personal Tasks section). */
+  lockPersonal?: boolean;
 }
 
 export default function TaskFormModal({
@@ -106,6 +129,10 @@ export default function TaskFormModal({
   onSubmit,
   onCategoryCreated,
   canEditDetails = true,
+  role,
+  currentUserId,
+  defaultPersonal = false,
+  lockPersonal = false,
 }: Props) {
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft());
   const [newCatName, setNewCatName] = useState('');
@@ -113,13 +140,38 @@ export default function TaskFormModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  /** Admins & Super Admins may create organization tasks + new categories. */
+  const canCreateOrgTasks = isAdminRole(role);
+  /** Standard users can only ever work with personal tasks. */
+  const personalOnly = !canCreateOrgTasks;
+  /** Editing an existing personal task keeps it personal. */
+  const editingPersonal = !!task?.is_personal;
+
   useEffect(() => {
     if (!open) return;
     setError('');
     setShowCatInput(false);
     setNewCatName('');
-    setDraft(task ? draftFromTask(task) : emptyDraft());
-  }, [open, task]);
+    if (task) {
+      setDraft(draftFromTask(task));
+    } else {
+      const asPersonal = personalOnly || defaultPersonal;
+      setDraft(asPersonal ? emptyDraft(currentUserId, true) : emptyDraft(currentUserId, false));
+    }
+  }, [open, task, personalOnly, defaultPersonal, currentUserId]);
+
+  /** Toggle between "Personal" and "Organization" task type (admins only). */
+  function setPersonal(value: boolean) {
+    setDraft((d) => {
+      if (value) {
+        // Personal → assigned ONLY to me.
+        return { ...d, is_personal: true, assignees: currentUserId ? [currentUserId] : [] };
+      }
+      // Organization → at minimum myself so the list is never empty.
+      const assignees = d.assignees.length > 0 ? d.assignees : currentUserId ? [currentUserId] : [];
+      return { ...d, is_personal: false, assignees };
+    });
+  }
 
   function toggleDay(idx: number) {
     setDraft((d) => ({
@@ -131,6 +183,7 @@ export default function TaskFormModal({
   }
 
   function toggleAssignee(id: string) {
+    if (draft.is_personal) return; // personal tasks belong to the owner only
     setDraft((d) => ({
       ...d,
       assignees: d.assignees.includes(id)
@@ -140,6 +193,10 @@ export default function TaskFormModal({
   }
 
   async function addCategory() {
+    if (!canCreateOrgTasks) {
+      setError('Only Admins and Super Admins can create task categories.');
+      return;
+    }
     const name = newCatName.trim();
     if (!name) return;
     if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
@@ -149,7 +206,7 @@ export default function TaskFormModal({
     const color = CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length];
     const { data, error: err } = await supabase
       .from('task_categories')
-      .insert({ name, color, description: null, created_by: null })
+      .insert({ name, color, description: null, created_by: currentUserId ?? null })
       .select()
       .single();
     if (err) {
@@ -171,6 +228,15 @@ export default function TaskFormModal({
       if (res.error) setError(res.error);
       else onClose();
       return;
+    }
+    // ---- Permission guards (also enforced by Supabase RLS) ----
+    if (personalOnly && !draft.is_personal) {
+      return setError(
+        'Standard users cannot create organization tasks. Please save this as a Personal Task.',
+      );
+    }
+    if (draft.is_personal && currentUserId && !draft.assignees.includes(currentUserId)) {
+      return setError('A personal task must be assigned to you.');
     }
     if (!draft.title.trim()) return setError('Task title is required.');
     if (draft.assignees.length === 0) return setError('Select at least one assignee.');
@@ -197,13 +263,23 @@ export default function TaskFormModal({
     repeat_forever: draft.repeat_forever,
   });
 
+  const showTypeSection = !lockPersonal && (!task || canEditDetails);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-gray-800">
-            {task ? (canEditDetails ? 'Edit Task' : 'Update Task Status') : 'Assign New Task'}
+            {task
+              ? canEditDetails
+                ? editingPersonal
+                  ? 'Edit Personal Task'
+                  : 'Edit Task'
+                : 'Update Task Status'
+              : personalOnly || defaultPersonal
+                ? 'Add New Personal Task'
+                : 'Assign New Task'}
           </h3>
           <button
             onClick={onClose}
@@ -228,7 +304,120 @@ export default function TaskFormModal({
           </div>
         )}
 
+        {/* Standard users: they cannot raise tasks for the system/organization. */}
+        {canEditDetails && personalOnly && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3">
+            <Lock size={14} className="mt-0.5 flex-shrink-0 text-violet-600" />
+            <p className="text-xs text-violet-800 leading-relaxed">
+              As a <strong>Standard user</strong> you cannot create or assign tasks for the system
+              or the organization. You may add <strong>Personal Tasks</strong> here — visible only
+              to you and <strong>never counted in the organization’s totals</strong>. Ask an Admin
+              or Super Admin to create official tasks.
+            </p>
+          </div>
+        )}
+
         <div className={`space-y-4 ${canEditDetails ? '' : 'opacity-60 pointer-events-none'}`}>
+          {/* ── TASK TYPE ────────────────────────────────────────────────
+              Kept ABOVE the Title so the very first choice in the form is
+              whether this is a private personal task or an organization one. */}
+          {showTypeSection && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Task Type</label>
+              {lockPersonal || personalOnly ? (
+                <div className="flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
+                  <User size={15} className="mt-0.5 text-violet-600 flex-shrink-0" />
+                  <p className="text-xs text-violet-800">
+                    <strong>Personal Task</strong> — visible only to you and not counted in the
+                    whole system (organization dashboards, boards and statistics).
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPersonal(true)}
+                    className={`text-left rounded-lg border px-3 py-2 transition-colors ${
+                      draft.is_personal
+                        ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-200'
+                        : 'border-gray-300 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                      <User size={14} className="text-violet-600" /> Personal Task
+                    </span>
+                    <span className="block text-[11px] text-gray-500 mt-0.5">
+                      Only you can see it. Not counted in the system.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPersonal(false)}
+                    className={`text-left rounded-lg border px-3 py-2 transition-colors ${
+                      !draft.is_personal
+                        ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                        : 'border-gray-300 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                      <Users size={14} className="text-blue-600" /> Organization Task
+                    </span>
+                    <span className="block text-[11px] text-gray-500 mt-0.5">
+                      Visible to everyone and counted system-wide.
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── TASK CATEGORY (with inline "New category" → Add) ───────── */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Task Category</label>
+            <div className="flex gap-2">
+              <select
+                value={draft.category_id}
+                onChange={(e) => setDraft({ ...draft, category_id: e.target.value })}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white"
+              >
+                <option value="">No category</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              {canCreateOrgTasks && (
+                <button
+                  type="button"
+                  onClick={() => setShowCatInput((v) => !v)}
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50"
+                  title="Create a new category (Reporting, Peace & Order, …)"
+                >
+                  <Tag size={14} /> New category
+                </button>
+              )}
+            </div>
+            {canCreateOrgTasks && showCatInput && (
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  placeholder="e.g., Peace & Order"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  onKeyDown={(e) => e.key === 'Enter' && addCategory()}
+                />
+                <button
+                  type="button"
+                  onClick={addCategory}
+                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
+                >
+                  Add
+                </button>
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
             <input
@@ -248,51 +437,6 @@ export default function TaskFormModal({
               placeholder="Optional details…"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm resize-none"
             />
-          </div>
-
-          {/* Category */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Task Category</label>
-            <div className="flex gap-2">
-              <select
-                value={draft.category_id}
-                onChange={(e) => setDraft({ ...draft, category_id: e.target.value })}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white"
-              >
-                <option value="">No category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => setShowCatInput((v) => !v)}
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50"
-                title="Create a new category (Reporting, Peace & Order, …)"
-              >
-                <Tag size={14} /> New category
-              </button>
-            </div>
-            {showCatInput && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  placeholder="e.g., Peace & Order"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  onKeyDown={(e) => e.key === 'Enter' && addCategory()}
-                />
-                <button
-                  type="button"
-                  onClick={addCategory}
-                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
-                >
-                  Add
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -410,35 +554,57 @@ export default function TaskFormModal({
             </label>
           )}
 
-          {/* Multiple assignees */}
+          {/* Multiple assignees — organization tasks only (admins & superadmin). */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Assign To * <span className="text-xs text-gray-400">— multiple users allowed</span>
+              Assign To *{' '}
+              <span className="text-xs text-gray-400">
+                {draft.is_personal ? '— personal task: only you' : '— multiple users allowed'}
+              </span>
             </label>
-            <div className="max-h-44 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-              {profiles.map((p) => (
-                <label
-                  key={p.id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    checked={draft.assignees.includes(p.id)}
-                    onChange={() => toggleAssignee(p.id)}
-                  />
-                  <span className="font-medium text-gray-700">{p.full_name ?? p.email}</span>
-                  {p.position && <span className="text-xs text-gray-400">{p.position}</span>}
-                </label>
-              ))}
-              {profiles.length === 0 && (
-                <p className="px-3 py-3 text-sm text-gray-400">No staff accounts found.</p>
-              )}
-            </div>
-            {draft.assignees.length > 1 && (
-              <p className="text-xs text-blue-600 mt-1">
-                {draft.assignees.length} people will each be able to complete this task.
-              </p>
+
+            {draft.is_personal ? (
+              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">
+                <User size={15} className="text-violet-600 flex-shrink-0" />
+                <span className="font-medium">
+                  {profiles.find((p) => p.id === currentUserId)?.full_name ?? 'Me (only me)'}
+                </span>
+                <span className="text-xs text-gray-400">Private · visible only to you</span>
+              </div>
+            ) : (
+              <>
+                <div className="max-h-44 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                  {(canCreateOrgTasks ? profiles : profiles.filter((p) => p.id === currentUserId)
+                  ).map((p) => (
+                    <label
+                      key={p.id}
+                      className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        checked={draft.assignees.includes(p.id)}
+                        onChange={() => toggleAssignee(p.id)}
+                      />
+                      <span className="font-medium text-gray-700">{p.full_name ?? p.email}</span>
+                      {p.position && <span className="text-xs text-gray-400">{p.position}</span>}
+                    </label>
+                  ))}
+                  {profiles.length === 0 && (
+                    <p className="px-3 py-3 text-sm text-gray-400">No staff accounts found.</p>
+                  )}
+                </div>
+                {!canCreateOrgTasks && (
+                  <p className="text-[11px] text-gray-500 mt-1 flex items-center gap-1">
+                    <Lock size={11} /> Standard users can only assign tasks to themselves.
+                  </p>
+                )}
+                {draft.assignees.length > 1 && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    {draft.assignees.length} people will each be able to complete this task.
+                  </p>
+                )}
+              </>
             )}
           </div>
 
@@ -548,7 +714,7 @@ export default function TaskFormModal({
               className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 inline-flex items-center gap-2"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-              {task ? 'Save Changes' : 'Assign Task'}
+              {task ? 'Save Changes' : draft.is_personal ? 'Save Personal Task' : 'Assign Task'}
             </button>
           </div>
         </div>

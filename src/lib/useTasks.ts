@@ -3,6 +3,7 @@ import { format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import { friendlyDbError } from './dbErrors';
 import type { Profile, Task, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
+import { isAdminOrAbove } from '../lib/types';
 import { resolveTaskStatus, nextOccurrence } from './recurrence';
 
 /** Columns selected from the tasks table. */
@@ -211,9 +212,23 @@ export function useTasks(profile: Profile | null) {
     /** Personal task → only visible to its owner, never counted system-wide. */
     is_personal?: boolean;
   }) => {
+    const admin = isAdminOrAbove(profile?.role);
+
+    // ── PERMISSION: only Admins / Super Admins may create tasks for the
+    //    system or the organization. Standard users may ONLY create personal
+    //    tasks (private to themselves, excluded from every organization count).
+    if (!admin && !input.is_personal) {
+      return {
+        error:
+          'Standard users cannot create tasks for the system or the organization. Please save it as a Personal Task, or ask an Admin / Super Admin.',
+      };
+    }
+
     let assignees = dedupe([input.assigned_to, ...(input.assignees ?? [])].filter(Boolean));
     // Personal tasks belong exclusively to their creator/owner.
     if (input.is_personal && profile?.id) assignees = [profile.id];
+    // Standard users can never assign a task to somebody else.
+    if (!admin && profile?.id) assignees = assignees.filter((a) => a === profile.id);
     if (assignees.length === 0) return { error: 'Select at least one assignee.' };
 
     const frequency = input.frequency ?? 'one-time';

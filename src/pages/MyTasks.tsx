@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { RefreshCw, AlertTriangle, Lock, X } from 'lucide-react';
+import {
+  RefreshCw,
+  AlertTriangle,
+  Lock,
+  X,
+  Plus,
+  User,
+  Users,
+  Inbox,
+  ShieldAlert,
+} from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { friendlyDbError } from '../lib/dbErrors';
@@ -8,6 +18,7 @@ import StatsCards, { StatFilter } from '../components/StatsCards';
 import FrequencyFilter from '../components/FrequencyFilter';
 import TaskCard from '../components/TaskCard';
 import TaskFormModal from '../components/TaskFormModal';
+import { draftToPayload } from './dashboardShared';
 import type { Task, TaskFrequency } from '../lib/types';
 
 interface Ctx {
@@ -15,18 +26,61 @@ interface Ctx {
   isAdminOrAbove: boolean;
 }
 
+/** Filter a task list by the active status card + frequency buttons. */
+function applyFilters(
+  items: Task[],
+  filter: StatFilter,
+  freqs: TaskFrequency[],
+  statusOf: (t: Task) => 'pending' | 'completed' | 'overdue',
+) {
+  if (filter !== 'all') items = items.filter((x) => statusOf(x) === filter);
+  if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
+  return items;
+}
+
+/** Per-frequency counts within the currently selected status card. */
+function freqCountMap(
+  items: Task[],
+  filter: StatFilter,
+  statusOf: (t: Task) => 'pending' | 'completed' | 'overdue',
+) {
+  const base = filter === 'all' ? items : items.filter((x) => statusOf(x) === filter);
+  const map: Partial<Record<TaskFrequency, number>> = {};
+  base.forEach((x) => {
+    map[x.frequency] = (map[x.frequency] ?? 0) + 1;
+  });
+  return map;
+}
+
 /**
- * My Tasks — tasks assigned to the current user (any of the assignees).
- * Assigned users may ONLY complete a task (with the liability notice);
- * editing/deleting is disabled for them and enabled for Admins/Superadmin.
- * Status cards + frequency buttons work together (e.g. Pending + Daily).
+ * My Tasks — two clearly separated areas:
+ *
+ *  1. ASSIGNED TASKS — everything an Admin/Super Admin assigned to me.
+ *     Only the assigned user(s) can complete these (with the liability notice);
+ *     editing/deleting stays with Admins/Super Admins. Standard users get NO
+ *     "New Task" button here — they cannot create tasks for the system.
+ *  2. PERSONAL TASKS — private to-do items I create for MYSELF. They are only
+ *     visible to me and are NEVER counted in the organization-wide totals
+ *     (public board, dashboards, statistics). Everyone can add personal tasks.
  */
 export default function MyTasks() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
   const t = useTasks(profile);
+
+  // Assigned-tasks filters
   const [filter, setFilter] = useState<StatFilter>('all');
   const [freqs, setFreqs] = useState<TaskFrequency[]>([]);
+
+  // Personal-tasks filters (independent of the assigned ones)
+  const [pFilter, setPFilter] = useState<StatFilter>('all');
+  const [pFreqs, setPFreqs] = useState<TaskFrequency[]>([]);
+
+  /** Task opened in the editor/status modal. */
   const [statusTask, setStatusTask] = useState<Task | null>(null);
+  /** Create-task modal (Personal Tasks section / admins on assigned lists). */
+  const [createOpen, setCreateOpen] = useState(false);
+  /** Whether the create modal is in personal-task mode. */
+  const [createPersonal, setCreatePersonal] = useState(true);
 
   /** Clicking the already-active card resets BOTH status and frequency. */
   function handleCardSelect(f: StatFilter) {
@@ -42,25 +96,85 @@ export default function MyTasks() {
     setFreqs((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
   }
 
-  const list = useMemo(() => {
-    let items = t.myTasks;
-    if (filter !== 'all') items = items.filter((x) => t.statusOf(x) === filter);
-    if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
-    return items;
-  }, [t.myTasks, t.statusOf, filter, freqs]);
+  function handlePersonalCardSelect(f: StatFilter) {
+    if (f === pFilter) {
+      setPFilter('all');
+      setPFreqs([]);
+    } else {
+      setPFilter(f);
+    }
+  }
 
-  /** Per-frequency counts within the currently selected status card. */
-  const freqCounts = useMemo(() => {
-    const base =
-      filter === 'all' ? t.myTasks : t.myTasks.filter((x) => t.statusOf(x) === filter);
-    const map: Partial<Record<TaskFrequency, number>> = {};
-    base.forEach((x) => {
-      map[x.frequency] = (map[x.frequency] ?? 0) + 1;
-    });
-    return map;
-  }, [t.myTasks, t.statusOf, filter]);
+  function togglePFreq(f: TaskFrequency) {
+    setPFreqs((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
+  }
+
+  const assignedList = useMemo(
+    () => applyFilters(t.assignedTasks, filter, freqs, t.statusOf),
+    [t.assignedTasks, t.statusOf, filter, freqs],
+  );
+  const personalList = useMemo(
+    () => applyFilters(t.personalTasks, pFilter, pFreqs, t.statusOf),
+    [t.personalTasks, t.statusOf, pFilter, pFreqs],
+  );
+
+  const freqCounts = useMemo(
+    () => freqCountMap(t.assignedTasks, filter, t.statusOf),
+    [t.assignedTasks, t.statusOf, filter],
+  );
+  const personalFreqCounts = useMemo(
+    () => freqCountMap(t.personalTasks, pFilter, t.statusOf),
+    [t.personalTasks, t.statusOf, pFilter],
+  );
 
   const filtersActive = filter !== 'all' || freqs.length > 0;
+  const personalFiltersActive = pFilter !== 'all' || pFreqs.length > 0;
+
+  function openCreate(personal: boolean) {
+    setCreatePersonal(personal);
+    setCreateOpen(true);
+  }
+
+  async function handleCreateSubmit(draft: Parameters<typeof draftToPayload>[0]) {
+    const payload = draftToPayload(draft);
+    return t.createTask(payload);
+  }
+
+  async function handleEditSubmit(draft: Parameters<typeof draftToPayload>[0]) {
+    if (!statusTask) return { error: 'No task selected.' };
+    return t.updateTask(statusTask.id, draftToPayload(draft));
+  }
+
+  /** Render one task row with the correct permissions for its type. */
+  function renderCard(task: Task, personal: boolean) {
+    // Personal tasks are always fully manageable by their owner; assigned
+    // organization tasks can only be edited/deleted by Admins & Super Admins.
+    const canManage = personal || isAdminOrAbove;
+    return (
+      <TaskCard
+        key={task.id}
+        task={task}
+        status={t.statusOf(task)}
+        canManage={canManage}
+        onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
+        onReopen={t.reopenTask}
+        onEdit={
+          canManage
+            ? (tk) => {
+                setStatusTask(tk);
+              }
+            : undefined
+        }
+        onDelete={
+          canManage
+            ? async (tk) => {
+                if (window.confirm(`Delete “${tk.title}”?`)) await t.deleteTask(tk.id);
+              }
+            : undefined
+        }
+      />
+    );
+  }
 
   if (t.loading) {
     return (
@@ -80,12 +194,32 @@ export default function MyTasks() {
             responsible and liable for false completion.
           </p>
         </div>
-        <button
-          onClick={t.refetch}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-        >
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={t.refetch}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
+          {/* Personal tasks: allowed for EVERY role (private, not system-wide). */}
+          <button
+            onClick={() => openCreate(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-sm font-medium"
+            title="Add a private task that only you can see"
+          >
+            <Plus size={15} /> Add New Personal Task
+          </button>
+          {/* Organization/system tasks: Admins & Super Admins ONLY. */}
+          {isAdminOrAbove && (
+            <button
+              onClick={() => openCreate(false)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium"
+              title="Create and assign an official task for the organization"
+            >
+              <Plus size={15} /> New Task
+            </button>
+          )}
+        </div>
       </div>
 
       {t.error && (
@@ -97,118 +231,212 @@ export default function MyTasks() {
       {!isAdminOrAbove && (
         <div className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 mb-4 text-xs text-gray-600">
           <Lock size={14} className="mt-0.5 flex-shrink-0" />
-          Assigned staff cannot edit or delete their tasks. Use the Complete button after
-          acknowledging responsibility, or contact your Admin for corrections.
+          <span>
+            <strong>Standard user:</strong> you cannot create or assign tasks for the system or the
+            organization — only Admins and Super Admins can do that. You may still add{' '}
+            <strong>Personal Tasks</strong> below (visible only to you and never counted in the
+            whole system), and you can complete the tasks assigned to you. Assigned staff cannot
+            edit or delete those tasks; contact your Admin for corrections.
+          </span>
         </div>
       )}
 
-      <StatsCards stats={t.stats.mine} active={filter} onSelect={handleCardSelect} />
-
-      <FrequencyFilter
-        active={freqs}
-        counts={freqCounts}
-        onToggle={toggleFreq}
-        onClear={() => setFreqs([])}
-      />
-
-      {filtersActive && (
-        <div className="flex flex-wrap items-center gap-2 mb-4 -mt-2">
-          <span className="text-xs text-gray-500">Active filters:</span>
-          {filter !== 'all' && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
-              {filter}
-              <button onClick={() => setFilter('all')} title="Remove status filter">
-                <X size={11} />
-              </button>
+      {/* ════════════════ 1 · ASSIGNED TASKS (organization) ════════════════ */}
+      <section className="mb-10">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">
+            <Users size={17} className="text-blue-600" />
+            Assigned Tasks
+            <span className="rounded-full bg-gray-100 text-gray-600 text-[11px] font-semibold px-2 py-0.5">
+              {t.stats.mine.total}
             </span>
-          )}
-          {freqs.map((f) => (
-            <span
-              key={f}
-              className="inline-flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize"
+          </h2>
+          <p className="text-xs text-gray-500">
+            Official tasks assigned to you — counted in the organization’s totals.
+          </p>
+        </div>
+
+        <StatsCards stats={t.stats.mine} active={filter} onSelect={handleCardSelect} />
+
+        <FrequencyFilter
+          active={freqs}
+          counts={freqCounts}
+          onToggle={toggleFreq}
+          onClear={() => setFreqs([])}
+        />
+
+        {filtersActive && (
+          <div className="flex flex-wrap items-center gap-2 mb-4 -mt-2">
+            <span className="text-xs text-gray-500">Active filters:</span>
+            {filter !== 'all' && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
+                {filter}
+                <button onClick={() => setFilter('all')} title="Remove status filter">
+                  <X size={11} />
+                </button>
+              </span>
+            )}
+            {freqs.map((f) => (
+              <span
+                key={f}
+                className="inline-flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize"
+              >
+                {f}
+                <button onClick={() => toggleFreq(f)} title={`Remove ${f} filter`}>
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => {
+                setFilter('all');
+                setFreqs([]);
+              }}
+              className="text-[11px] font-semibold text-red-600 hover:underline ml-1"
             >
-              {f}
-              <button onClick={() => toggleFreq(f)} title={`Remove ${f} filter`}>
-                <X size={11} />
-              </button>
+              Reset all filters
+            </button>
+          </div>
+        )}
+
+        {assignedList.length === 0 ? (
+          <div className="bg-white rounded-xl border border-dashed border-gray-200 py-14 text-center">
+            <p className="text-gray-500 font-medium">
+              {filtersActive
+                ? 'No assigned tasks match this filter.'
+                : 'You have no assigned tasks. 🎉'}
+            </p>
+            {filtersActive && (
+              <p className="text-sm text-gray-400 mt-1">
+                Click the active card again — or “Reset all filters” — to clear them.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">{assignedList.map((task) => renderCard(task, false))}</div>
+        )}
+      </section>
+
+      {/* ════════════════ 2 · PERSONAL TASKS (private) ════════════════ */}
+      <section>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">
+            <User size={17} className="text-violet-600" />
+            Personal Tasks
+            <span className="rounded-full bg-violet-100 text-violet-700 text-[11px] font-semibold px-2 py-0.5">
+              {t.stats.personal.total}
             </span>
-          ))}
+            <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+              <ShieldAlert size={11} /> Private · not counted in the system
+            </span>
+          </h2>
           <button
-            onClick={() => {
-              setFilter('all');
-              setFreqs([]);
-            }}
-            className="text-[11px] font-semibold text-red-600 hover:underline ml-1"
+            onClick={() => openCreate(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-700 px-3 py-1.5 text-sm font-medium"
           >
-            Reset all filters
+            <Plus size={14} /> Add New Task
           </button>
         </div>
-      )}
 
-      {list.length === 0 ? (
-        <div className="bg-white rounded-xl border border-dashed border-gray-200 py-14 text-center">
-          <p className="text-gray-500 font-medium">
-            {filtersActive ? 'No tasks match this filter.' : 'You have no assigned tasks. 🎉'}
-          </p>
-          {filtersActive && (
-            <p className="text-sm text-gray-400 mt-1">
-              Click the active card again — or “Reset all filters” — to clear them.
+        <div className="flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 mb-4 text-xs text-violet-800">
+          <Inbox size={14} className="mt-0.5 flex-shrink-0" />
+          <span>
+            Your own to-do list. These tasks are <strong>only viewable by you</strong> and are{' '}
+            <strong>not counted anywhere in the organization</strong> — not on the public board,
+            dashboards, statistics or reports. You may freely create, edit and delete them.
+          </span>
+        </div>
+
+        <StatsCards stats={t.stats.personal} active={pFilter} onSelect={handlePersonalCardSelect} />
+
+        <FrequencyFilter
+          active={pFreqs}
+          counts={personalFreqCounts}
+          onToggle={togglePFreq}
+          onClear={() => setPFreqs([])}
+        />
+
+        {personalFiltersActive && (
+          <div className="flex flex-wrap items-center gap-2 mb-4 -mt-2">
+            <span className="text-xs text-gray-500">Active filters:</span>
+            {pFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
+                {pFilter}
+                <button onClick={() => setPFilter('all')} title="Remove status filter">
+                  <X size={11} />
+                </button>
+              </span>
+            )}
+            {pFreqs.map((f) => (
+              <span
+                key={f}
+                className="inline-flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize"
+              >
+                {f}
+                <button onClick={() => togglePFreq(f)} title={`Remove ${f} filter`}>
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => {
+                setPFilter('all');
+                setPFreqs([]);
+              }}
+              className="text-[11px] font-semibold text-red-600 hover:underline ml-1"
+            >
+              Reset all filters
+            </button>
+          </div>
+        )}
+
+        {personalList.length === 0 ? (
+          <div className="bg-white rounded-xl border border-dashed border-gray-200 py-14 text-center">
+            <p className="text-gray-500 font-medium">
+              {personalFiltersActive
+                ? 'No personal tasks match this filter.'
+                : 'No personal tasks yet.'}
             </p>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {list.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              status={t.statusOf(task)}
-              canManage={isAdminOrAbove}
-              onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
-              onReopen={t.reopenTask}
-              onEdit={
-                isAdminOrAbove
-                  ? (tk) => {
-                      setStatusTask(tk);
-                    }
-                  : undefined
-              }
-              onDelete={
-                isAdminOrAbove
-                  ? async (tk) => {
-                      if (window.confirm(`Delete “${tk.title}”?`)) await t.deleteTask(tk.id);
-                    }
-                  : undefined
-              }
-            />
-          ))}
-        </div>
-      )}
+            {!personalFiltersActive && (
+              <p className="text-sm text-gray-400 mt-1">
+                Use “Add New Task” above to keep private reminders for yourself.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">{personalList.map((task) => renderCard(task, true))}</div>
+        )}
+      </section>
 
-      {/* Status-only modal for non-admins is handled inline in TaskCard;
-          admins get the full editor here via Task Management. */}
+      {/* Create modal — personal mode for everyone, org mode for admins only. */}
       <TaskFormModal
-        open={!!statusTask && isAdminOrAbove}
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        task={null}
+        categories={t.categories}
+        profiles={t.profiles}
+        role={profile.role}
+        currentUserId={profile.id}
+        defaultPersonal={createPersonal}
+        lockPersonal={createPersonal}
+        canEditDetails
+        onSubmit={handleCreateSubmit}
+        onCategoryCreated={() => t.refetch()}
+      />
+
+      {/* Edit / status modal. Personal tasks → owner can edit everything;
+          assigned organization tasks → full editor for admins only. */}
+      <TaskFormModal
+        open={!!statusTask}
         onClose={() => setStatusTask(null)}
         task={statusTask}
         categories={t.categories}
         profiles={t.profiles}
-        canEditDetails={isAdminOrAbove}
-        onSubmit={async (draft) => {
-          if (!statusTask) return { error: 'No task selected.' };
-          return t.updateTask(statusTask.id, {
-            title: draft.title,
-            description: draft.description || null,
-            due_date: draft.due_date ? new Date(`${draft.due_date}T09:00:00`).toISOString() : null,
-            frequency: draft.frequency as Task['frequency'],
-            days_of_week: draft.days_of_week,
-            repeat_forever: draft.repeat_forever,
-            category_id: draft.category_id || null,
-            assignees: draft.assignees,
-            links: draft.links,
-            status: draft.status,
-          });
-        }}
+        role={profile.role}
+        currentUserId={profile.id}
+        lockPersonal={!!statusTask?.is_personal}
+        canEditDetails={!!statusTask && (statusTask.is_personal || isAdminOrAbove)}
+        onSubmit={handleEditSubmit}
         onCategoryCreated={() => t.refetch()}
       />
     </div>
