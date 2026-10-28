@@ -19,7 +19,7 @@ interface UserFormState {
   id?: string;
   full_name: string;
   email: string;
-  office: string;
+  position: string;
   role: UserRole;
   password: string;
 }
@@ -81,7 +81,7 @@ export default function UserManagement() {
           !query.trim() ||
           (u.full_name ?? '').toLowerCase().includes(query.toLowerCase()) ||
           (u.email ?? '').toLowerCase().includes(query.toLowerCase()) ||
-          (u.office ?? '').toLowerCase().includes(query.toLowerCase()),
+          (u.position ?? '').toLowerCase().includes(query.toLowerCase()),
       ),
     [users, query],
   );
@@ -91,7 +91,7 @@ export default function UserManagement() {
     setForm({
       full_name: '',
       email: '',
-      office: '',
+      position: '',
       role: 'STANDARD',
       password: '',
     });
@@ -104,7 +104,7 @@ export default function UserManagement() {
       id: user.id,
       full_name: user.full_name ?? '',
       email: user.email ?? '',
-      office: user.office ?? '',
+      position: user.position ?? '',
       role: user.role,
       password: '',
     });
@@ -131,7 +131,7 @@ export default function UserManagement() {
         .update({
           full_name: form.full_name.trim(),
           email: form.email.trim().toLowerCase(),
-          office: form.office.trim() || null,
+          position: form.position.trim() || null,
           role: form.role,
           updated_at: new Date().toISOString(),
         })
@@ -143,7 +143,7 @@ export default function UserManagement() {
         p_email: form.email.trim().toLowerCase(),
         p_password: form.password,
         p_full_name: form.full_name.trim(),
-        p_office: form.office.trim() || null,
+        p_position: form.position.trim() || null,
         p_role: form.role,
       });
       err = rpcErr?.message ?? null;
@@ -229,7 +229,7 @@ export default function UserManagement() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search name, email, or office…"
+          placeholder="Search name, email, or position…"
           className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm bg-white"
         />
       </div>
@@ -252,7 +252,7 @@ export default function UserManagement() {
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-500 border-b border-gray-100 bg-gray-50/60">
                   <th className="px-5 py-3 font-semibold">User</th>
-                  <th className="px-5 py-3 font-semibold">Office</th>
+                  <th className="px-5 py-3 font-semibold">Position</th>
                   <th className="px-5 py-3 font-semibold">Role</th>
                   <th className="px-5 py-3 font-semibold">Open Tasks</th>
                   <th className="px-5 py-3 font-semibold text-right">Actions</th>
@@ -285,7 +285,7 @@ export default function UserManagement() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-4 text-gray-600">{user.office ?? '—'}</td>
+                    <td className="px-5 py-4 text-gray-600">{user.position ?? '—'}</td>
                     <td className="px-5 py-4">
                       <span
                         className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[user.role]}`}
@@ -382,12 +382,12 @@ export default function UserManagement() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Office / Department
+                  Position / Designation
                 </label>
                 <input
-                  value={form.office}
-                  onChange={(e) => setForm({ ...form, office: e.target.value })}
-                  placeholder="e.g., Planning Division"
+                  value={form.position}
+                  onChange={(e) => setForm({ ...form, position: e.target.value })}
+                  placeholder="e.g., Administrative Officer"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
               </div>

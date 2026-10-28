@@ -105,7 +105,7 @@ export function useTasks(profile: Profile | null) {
       ...(data as Task),
       assignee: (() => {
         const p = profilesMapRef.current.get((data as Task).assigned_to);
-        return p ? { full_name: p.full_name, office: p.office, role: p.role } : null;
+        return p ? { full_name: p.full_name, position: p.position, role: p.role } : null;
       })(),
     };
     setTasks((prev) =>

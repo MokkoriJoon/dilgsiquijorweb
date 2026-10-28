@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase';
+import { ensurePrimarySuperAdmin } from './types';
 import type { Profile, UserRole } from './types';
 
 /**
@@ -33,7 +34,7 @@ export function useAuth() {
           id: userId,
           full_name: (user?.user_metadata?.full_name as string) ?? null,
           email: user?.email ?? null,
-          office: (user?.user_metadata?.office as string) ?? null,
+          position: (user?.user_metadata?.position as string) ?? null,
           role: 'STANDARD',
         });
       }

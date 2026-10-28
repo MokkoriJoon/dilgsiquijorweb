@@ -8,12 +8,25 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT,
   email TEXT UNIQUE,
-  office TEXT,
+  position TEXT,   -- Position / Designation (formerly "office")
   role TEXT NOT NULL DEFAULT 'STANDARD'
     CHECK (role IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration: rename the legacy "office" column to "position" (safe to re-run).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'profiles'
+                AND column_name = 'office')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'profiles'
+                AND column_name = 'position') THEN
+    ALTER TABLE public.profiles RENAME COLUMN office TO position;
+  END IF;
+END $$;
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
@@ -41,12 +54,12 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (id, full_name, email, office, role)
+  INSERT INTO public.profiles (id, full_name, email, position, role)
   VALUES (
     NEW.id,
     NEW.raw_user_meta_data ->> 'full_name',
     NEW.email,
-    NEW.raw_user_meta_data ->> 'office',
+    NEW.raw_user_meta_data ->> 'position',
     COALESCE(NEW.raw_user_meta_data ->> 'role', 'STANDARD')
   )
   ON CONFLICT (id) DO NOTHING;
@@ -179,7 +192,7 @@ CREATE OR REPLACE FUNCTION public.admin_create_user(
   p_email TEXT,
   p_password TEXT,
   p_full_name TEXT,
-  p_office TEXT,
+  p_position TEXT,
   p_role TEXT DEFAULT 'STANDARD'
 )
 RETURNS UUID
@@ -217,15 +230,15 @@ BEGIN
     crypt(p_password, gen_salt('bf')),
     NOW(),
     '{"provider":"email","providers":["email"]}',
-    jsonb_build_object('full_name', p_full_name, 'office', p_office),
+    jsonb_build_object('full_name', p_full_name, 'position', p_position),
     NOW(), NOW(), '', '', '', ''
   );
 
-  INSERT INTO public.profiles (id, full_name, email, office, role)
-  VALUES (v_user_id, p_full_name, lower(btrim(p_email)), p_office, p_role)
+  INSERT INTO public.profiles (id, full_name, email, position, role)
+  VALUES (v_user_id, p_full_name, lower(btrim(p_email)), p_position, p_role)
   ON CONFLICT (id) DO UPDATE
     SET full_name = EXCLUDED.full_name,
-        office    = EXCLUDED.office,
+        position  = EXCLUDED.position,
         role      = EXCLUDED.role;
 
   RETURN v_user_id;
