@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCheck, Trash2, X, AlertTriangle, Clock, UserPlus } from 'lucide-react';
+import { Bell, CheckCheck, Trash2, X, AlertTriangle, Clock, UserPlus, CalendarDays } from 'lucide-react';
+import { NOTIF_SECTION_ORDER } from '../lib/notifications';
 import type { AppNotification, NotifKind } from '../lib/notifications';
 
 const KIND_STYLE: Record<NotifKind, { icon: typeof Bell; ring: string; bg: string; fg: string }> = {
   overdue: { icon: AlertTriangle, ring: 'ring-red-300', bg: 'bg-red-50', fg: 'text-red-600' },
+  'due-today': { icon: CalendarDays, ring: 'ring-orange-300', bg: 'bg-orange-50', fg: 'text-orange-600' },
   'due-soon': { icon: Clock, ring: 'ring-amber-300', bg: 'bg-amber-50', fg: 'text-amber-600' },
   assigned: { icon: UserPlus, ring: 'ring-blue-300', bg: 'bg-blue-50', fg: 'text-blue-600' },
 };
@@ -83,61 +85,80 @@ export default function NotificationBell({
             </button>
           </div>
 
-          <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+          <div className="max-h-[380px] overflow-y-auto divide-y divide-gray-50">
             {notifications.length === 0 ? (
               <div className="py-10 text-center">
                 <Bell size={22} className="mx-auto text-gray-300 mb-2" />
                 <p className="text-sm text-gray-500 font-medium">You're all caught up!</p>
                 <p className="text-xs text-gray-400 mt-1">
-                  Alerts appear when a task is assigned, due tomorrow, or overdue.
+                  Alerts appear when a task is assigned, due today, due tomorrow, or overdue.
                 </p>
               </div>
             ) : (
-              notifications.map((n) => {
-                const s = KIND_STYLE[n.kind];
-                const Icon = s.icon;
-                const isUnread = !isRead(n.id, n.taskId);
-
-                /** Clicking the item (or its link) marks it as read for good. */
-                function openTask() {
-                  markRead(n.id, n.taskId);
-                  setOpen(false);
-                  navigate('/app/tasks');
-                }
-
+              NOTIF_SECTION_ORDER.map((section) => {
+                const items = notifications.filter((n) => n.kind === section.kind);
+                if (items.length === 0) return null;
+                const s = KIND_STYLE[section.kind];
+                const SectionIcon = s.icon;
                 return (
-                  <div
-                    key={n.id}
-                    className={`group px-4 py-3 ${s.bg}/40 hover:bg-gray-50 ${
-                      isUnread ? '' : 'opacity-70'
-                    }`}
-                  >
-                    <div className="flex gap-3">
-                      <div className={`${s.bg} ${s.ring} ring-1 rounded-full p-2 h-fit flex-shrink-0`}>
-                        <Icon size={14} className={s.fg} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-gray-800 leading-snug">
-                          {n.title}
-                          {isUnread && (
-                            <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-blue-600 align-middle" />
-                          )}
-                        </p>
-                        <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{n.body}</p>
-                        <button onClick={openTask} className="block w-full text-left">
-                          <span className="text-[11px] text-blue-600 hover:underline mt-1 font-medium inline-block">
-                            View my tasks →
-                          </span>
-                        </button>
-                      </div>
-                      <button
-                        onClick={() => dismiss(n.id, n.taskId)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200 text-gray-400 self-start"
-                        title="Dismiss"
-                      >
-                        <X size={13} />
-                      </button>
+                  <div key={section.kind}>
+                    {/* ── SECTION HEADER: OVERDUE / Due Today / Due Tomorrow … ── */}
+                    <div
+                      className={`sticky top-0 z-10 flex items-center gap-1.5 px-4 py-1.5 border-b ${s.bg} border-gray-100`}
+                    >
+                      <SectionIcon size={12} className={s.fg} />
+                      <p className={`text-[10px] font-extrabold uppercase tracking-wider ${s.fg}`}>
+                        {section.label.replace(/^\S+\s/, '')} ({items.length})
+                      </p>
                     </div>
+
+                    {items.map((n) => {
+                      const Icon = s.icon;
+                      const isUnread = !isRead(n.id, n.taskId);
+
+                      /** Clicking the item (or its link) marks it as read for good. */
+                      function openTask() {
+                        markRead(n.id, n.taskId);
+                        setOpen(false);
+                        navigate('/app/tasks');
+                      }
+
+                      return (
+                        <div
+                          key={n.id}
+                          className={`group px-4 py-3 hover:bg-gray-50 ${
+                            isUnread ? '' : 'opacity-70'
+                          }`}
+                        >
+                          <div className="flex gap-3">
+                            <div className={`${s.bg} ${s.ring} ring-1 rounded-full p-2 h-fit flex-shrink-0`}>
+                              <Icon size={14} className={s.fg} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-bold text-gray-800 leading-snug">
+                                {n.title}
+                                {isUnread && (
+                                  <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-blue-600 align-middle" />
+                                )}
+                              </p>
+                              <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{n.body}</p>
+                              <button onClick={openTask} className="block w-full text-left">
+                                <span className="text-[11px] text-blue-600 hover:underline mt-1 font-medium inline-block">
+                                  View my tasks →
+                                </span>
+                              </button>
+                            </div>
+                            <button
+                              onClick={() => dismiss(n.id, n.taskId)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200 text-gray-400 self-start"
+                              title="Dismiss"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })

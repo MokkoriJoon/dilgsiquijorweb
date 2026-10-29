@@ -14,7 +14,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { daysUntilEffectiveDeadline } from './useTasks';
 import type { Profile, Task } from './types';
 
-export type NotifKind = 'assigned' | 'due-soon' | 'overdue';
+export type NotifKind = 'assigned' | 'due-today' | 'due-soon' | 'overdue';
+
+/** Display order of the notification sections in the bell dropdown. */
+export const NOTIF_SECTION_ORDER: { kind: NotifKind; label: string }[] = [
+  { kind: 'overdue', label: '🚨 OVERDUE' },
+  { kind: 'due-today', label: '📅 Due Today' },
+  { kind: 'due-soon', label: '⏰ Due Tomorrow' },
+  { kind: 'assigned', label: '🆕 Assigned to you' },
+];
 
 export interface AppNotification {
   id: string; // stable dedupe id: kind:taskId:date
@@ -136,6 +144,19 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
             body: `“${t.title}” was due on ${fmtDue(t.due_date)} — overdue by ${Math.abs(dd)} day(s).`,
             createdAt: now,
           });
+        } else if (dd === 0) {
+          // Due TODAY — fires when the effective deadline is today. For a
+          // Daily recurring task this happens every day it is scheduled, so
+          // "Due tomorrow" (yesterday's warning) correctly rolls over into a
+          // fresh "Due Today" notification instead of claiming 1 day left.
+          out.push({
+            id: pushId('due-today'),
+            kind: 'due-today',
+            taskId: t.id,
+            title: '📅 Due today',
+            body: `“${t.title}” is due today (${fmtDue(t.due_date)}). Finish it before end of day.`,
+            createdAt: now,
+          });
         } else if (dd === 1) {
           out.push({
             id: pushId('due-soon'),
@@ -151,7 +172,8 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
   }
 
   return out.sort((a, b) => {
-    const rank = (n: AppNotification) => (n.kind === 'overdue' ? 0 : n.kind === 'due-soon' ? 1 : 2);
+    const rank = (n: AppNotification) =>
+      n.kind === 'overdue' ? 0 : n.kind === 'due-today' ? 1 : n.kind === 'due-soon' ? 2 : 3;
     if (rank(a) !== rank(b)) return rank(a) - rank(b);
     return b.createdAt - a.createdAt;
   });

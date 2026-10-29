@@ -416,6 +416,23 @@ export function useTasks(profile: Profile | null) {
           'Standard users cannot create organization categories. Please create a Personal Category instead.',
       };
     }
+    // Client-side guard first (case-insensitive): org names must be unique
+    // across ORGANIZATION categories; personal names only across MY OWN ones.
+    const wanted = input.name.trim().toLowerCase();
+    const clash = categories.some(
+      (c) =>
+        c.name.trim().toLowerCase() === wanted &&
+        (!!c.is_personal === !!input.is_personal) &&
+        (!input.is_personal || c.owner_id === profile?.id),
+    );
+    if (clash) {
+      return {
+        error: `Category “${input.name.trim()}” already exists${
+          input.is_personal ? ' in your personal categories' : ''
+        }. Please choose a different name.`,
+      };
+    }
+
     const { error: err } = await supabase.from('task_categories').insert({
       name: input.name.trim(),
       color: input.color ?? null,
@@ -424,14 +441,51 @@ export function useTasks(profile: Profile | null) {
       is_personal: !!input.is_personal,
       owner_id: input.is_personal ? profile?.id ?? null : null,
     });
-    if (err) return { error: err.message };
+    if (err) {
+      // Surface raw DB errors like `duplicate key value violates unique
+      // constraint "task_categories_name_key"` as a friendly message.
+      if (/duplicate key/i.test(err.message)) {
+        return {
+          error: `Category “${input.name.trim()}” already exists. Please choose a different name.`,
+        };
+      }
+      return { error: friendlyDbError(err.message) };
+    }
     await fetchData();
     return {};
   };
 
+  /** Edit a category's title / description / colour (admins for org
+   *  categories; owners for their own personal ones). */
   const updateCategory = async (id: string, patch: Partial<TaskCategory>) => {
-    const { error: err } = await supabase.from('task_categories').update(patch).eq('id', id);
-    if (err) return { error: err.message };
+    // Duplicate-name check on rename (case-insensitive, scoped the same way
+    // as the DB unique indexes: org-wide vs per-owner personal).
+    const target = categories.find((c) => c.id === id);
+    if (patch.name !== undefined && target) {
+      const wanted = patch.name.trim().toLowerCase();
+      const clash = categories.some(
+        (c) =>
+          c.id !== id &&
+          c.name.trim().toLowerCase() === wanted &&
+          (!!c.is_personal === !!target.is_personal) &&
+          (!target.is_personal || c.owner_id === target.owner_id),
+      );
+      if (clash) {
+        return { error: `Category “${patch.name.trim()}” already exists. Please choose a different name.` };
+      }
+    }
+    const clean: Record<string, any> = {};
+    if (patch.name !== undefined) clean.name = patch.name.trim();
+    if (patch.description !== undefined) clean.description = patch.description?.trim() || null;
+    if (patch.color !== undefined) clean.color = patch.color || null;
+
+    const { error: err } = await supabase.from('task_categories').update(clean).eq('id', id);
+    if (err) {
+      if (/duplicate key/i.test(err.message)) {
+        return { error: 'That category name is already taken. Please choose a different name.' };
+      }
+      return { error: friendlyDbError(err.message) };
+    }
     await fetchData();
     return {};
   };
