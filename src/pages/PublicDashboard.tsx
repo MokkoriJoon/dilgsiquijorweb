@@ -78,7 +78,13 @@ function AnnouncementPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [idx, setIdx] = useState(0);
-  const items = announcements.slice(0, 8); // previews cycle through latest 8
+  // Hidden announcements (is_visible === false) never appear on the public
+  // board — they stay in the Announcements page for admins only.
+  const visibleAnnouncements = useMemo(
+    () => announcements.filter((an) => an.is_visible !== false),
+    [announcements],
+  );
+  const items = visibleAnnouncements.slice(0, 8); // previews cycle through latest 8
 
   // Keep the carousel index valid when the list changes (realtime updates).
   useEffect(() => {
@@ -165,13 +171,13 @@ function AnnouncementPanel({
             </div>
             {loading ? (
               <p className="px-4 py-6 text-center text-sm text-gray-500">Loading…</p>
-            ) : announcements.length === 0 ? (
+            ) : visibleAnnouncements.length === 0 ? (
               <p className="px-4 py-6 text-center text-sm text-gray-500">
                 No announcements yet.
               </p>
             ) : (
               <ul className="divide-y divide-gray-100">
-                {announcements.map((an) => (
+                {visibleAnnouncements.map((an) => (
                   <li key={an.id} className="px-4 py-3">
                     <p className="text-sm font-semibold text-gray-800 leading-snug break-words">
                       {an.title}

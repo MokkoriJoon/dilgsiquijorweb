@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Megaphone, Plus, Pencil, Trash2, X, Users } from 'lucide-react';
+import { Megaphone, Plus, Pencil, Trash2, X, Users, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import {
   useAnnouncements,
@@ -103,10 +103,10 @@ export default function Announcements() {
             setFormOpen(false);
             setEditing(null);
           }}
-          onSave={async (title, body, details) => {
+          onSave={async (title, body, details, visible) => {
             const res = editing
-              ? await a.update(editing.id, { title, body, ...details })
-              : await a.create({ title, body, authorId: profile?.id ?? null, ...details });
+              ? await a.update(editing.id, { title, body, is_visible: visible, ...details })
+              : await a.create({ title, body, authorId: profile?.id ?? null, is_visible: visible, ...details });
             if (!res.error) {
               setFormOpen(false);
               setEditing(null);
@@ -134,6 +134,13 @@ export default function Announcements() {
             <li key={an.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
+                  {/* Visibility badge — hidden notices stay on this page but
+                      are removed from the public dashboard ticker/News. */}
+                  {an.is_visible === false && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-gray-200 text-gray-600 px-2 py-0.5 text-[10px] font-bold mb-1">
+                      <EyeOff size={11} /> Hidden — not shown publicly
+                    </span>
+                  )}
                   {/* WHAT (headline) — required */}
                   <h2 className="font-semibold text-gray-800 leading-snug break-words">{an.title}</h2>
                   {/* WHAT (details) — optional */}
@@ -166,6 +173,21 @@ export default function Announcements() {
                 </div>
                 {canManage && (
                   <div className="flex-shrink-0 flex gap-1">
+                    <button
+                      onClick={() => a.setVisible(an.id, an.is_visible === false)}
+                      title={
+                        an.is_visible === false
+                          ? 'Make this announcement visible on the public dashboard'
+                          : 'Hide this announcement (keeps it here — not deleted)'
+                      }
+                      className={`rounded-lg border p-2 ${
+                        an.is_visible === false
+                          ? 'border-green-200 text-green-600 hover:bg-green-50'
+                          : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {an.is_visible === false ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </button>
                     <button
                       onClick={() => {
                         setEditing(an);
@@ -256,12 +278,15 @@ function AnnouncementFormModal({
     title: string,
     body: string,
     details: AnnouncementDetails,
+    visible: boolean,
   ) => Promise<{ error?: string }>;
 }) {
   const d = editing ? fiveW1H(editing) : { whois: '', when: '', whereis: '', why: '', how: '' };
   const [title, setTitle] = useState(editing?.title ?? '');
   const [body, setBody] = useState(editing?.body ?? '');
   const [details, setDetails] = useState<AnnouncementDetails>(d);
+  /** Visible / Hidden toggle — hide a finished notice without deleting it. */
+  const [visible, setVisible] = useState(editing ? editing.is_visible !== false : true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -373,7 +398,7 @@ function AnnouncementFormModal({
       return;
     }
     setSaving(true);
-    const res = await onSave(title, body, details);
+    const res = await onSave(title, body, details, visible);
     setSaving(false);
     if (res.error) setErr(res.error);
   }
@@ -569,6 +594,38 @@ function AnnouncementFormModal({
         </div>
 
         {err && <p className="text-xs text-red-600 mt-3">{err}</p>}
+
+        {/* ── Visible / Hidden toggle — hide a finished notice without deleting it ── */}
+        <div className="mt-4 flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+              {visible ? <Eye size={14} className="text-green-600" /> : <EyeOff size={14} className="text-gray-500" />}
+              {visible ? 'Visible on the Public Dashboard' : 'Hidden from the Public Dashboard'}
+            </p>
+            <p className="text-[10px] text-gray-500">
+              {visible
+                ? 'Everyone can see this announcement on the public board ticker & News.'
+                : 'This notice is kept (not deleted) but no longer shown publicly.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={visible}
+            onClick={() => setVisible((v) => !v)}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+              visible ? 'bg-green-600' : 'bg-gray-300'
+            }`}
+            title={visible ? 'Click to hide' : 'Click to make visible'}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                visible ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+
         <div className="flex flex-wrap justify-end gap-2 mt-4">
           <button
             onClick={onClose}
