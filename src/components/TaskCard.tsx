@@ -6,15 +6,22 @@ import { formatDueDate } from '../lib/useTasks';
 
 /**
  * One row/card in any task list.
- *  • Assigned (STANDARD) users get a "Complete" button that opens a liability
- *    acknowledgement — they certify they are held responsible if the task is
- *    not actually complete. They can NEVER edit or delete tasks assigned to them.
- *  • Admins / Super Admins get global edit/delete (Task Management repository).
+ *  • The "Complete Task" button appears ONLY for users actually assigned to
+ *    the task (or a SUPER_ADMIN, who may complete ANY task even when not
+ *    assigned). Unassigned users never see a Complete button.
+ *  • Completing flips the task out of Pending into COMPLETE immediately; on
+ *    multi-assignee tasks each user certifies their own slice and the whole
+ *    task completes once every assignee has certified.
+ *  • Admins/Super Admins get global edit/delete; STANDARD users can NEVER
+ *    edit or delete tasks merely assigned to them (only their own Personal
+ *    Tasks stay fully editable — enforced via the `canManage` prop).
  */
 export default function TaskCard({
   task,
   status,
   canManage,
+  canComplete = true,
+  myDone = false,
   onComplete,
   onReopen,
   onEdit,
@@ -24,8 +31,12 @@ export default function TaskCard({
   status: 'completed' | 'pending' | 'overdue';
   /** Admin or above → edit/delete/reopen allowed. */
   canManage: boolean;
+  /** Current user is an assignee OR a Super Admin → may certify completion. */
+  canComplete?: boolean;
+  /** The current user already certified THEIR OWN assignment (multi-assignee). */
+  myDone?: boolean;
   onComplete: (id: string, note: string) => Promise<{ error?: string }>;
-  onReopen?: (id: string) => Promise<{ error?: string }>;
+  onReopen?: (id: string) => Promise<{ error?: string }> | void;
   onEdit?: (task: Task) => void;
   onDelete?: (task: Task) => void;
 }) {
@@ -110,7 +121,7 @@ export default function TaskCard({
         </div>
 
         <div className="flex flex-col items-end gap-2">
-          {status !== 'completed' && (
+          {status !== 'completed' && canComplete && !myDone && (
             <button
               onClick={() => setConfirming((v) => !v)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 text-sm font-medium"
@@ -118,6 +129,15 @@ export default function TaskCard({
               <CheckCircle2 size={14} />
               Complete Task
             </button>
+          )}
+          {status !== 'completed' && myDone && (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-lg bg-green-50 border border-green-200 text-green-700 px-3 py-1.5 text-sm font-medium"
+              title="You already certified your part — the task completes when every assignee certifies."
+            >
+              <CheckCircle2 size={14} />
+              You completed your part
+            </span>
           )}
           {status === 'completed' && canManage && onReopen && (
             <button

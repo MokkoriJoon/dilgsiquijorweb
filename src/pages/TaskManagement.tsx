@@ -199,33 +199,45 @@ export default function TaskManagement() {
         </div>
       ) : (
         <div className="space-y-3">
-          {list.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              status={t.statusOf(task)}
-              canManage={isAdminOrAbove}
-              onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
-              onReopen={t.reopenTask}
-              onEdit={
-                isAdminOrAbove
-                  ? (tk) => {
-                      setEditing(tk);
-                      setModalOpen(true);
-                    }
-                  : undefined
-              }
-              onDelete={
-                isAdminOrAbove
-                  ? async (tk) => {
-                      if (window.confirm(`Delete “${tk.title}” from the repository?`)) {
-                        await t.deleteTask(tk.id);
+          {list.map((task) => {
+            // Repository view: Admins may edit/delete ONLY the tasks they
+            // created/assigned; Super Admins keep full global control.
+            const mine = task.assigned_by === profile?.id;
+            const canManage = isAdminOrAbove && (profile?.role === 'SUPER_ADMIN' || mine);
+            // Complete button → assignees only; Super Admins may complete ANY
+            // task even when not assigned. Unassigned users get NO button.
+            const assignedToMe =
+              task.assigned_to === profile.id || (task.assignees ?? []).includes(profile.id);
+            return (
+              <TaskCard
+                key={task.id}
+                task={task}
+                status={t.statusOf(task)}
+                canManage={canManage}
+                canComplete={profile?.role === 'SUPER_ADMIN' ? true : assignedToMe}
+                myDone={t.myAssignmentDone(task)}
+                onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
+                onReopen={t.reopenTask}
+                onEdit={
+                  canManage
+                    ? (tk) => {
+                        setEditing(tk);
+                        setModalOpen(true);
                       }
-                    }
-                  : undefined
-              }
-            />
-          ))}
+                    : undefined
+                }
+                onDelete={
+                  canManage
+                    ? async (tk) => {
+                        if (window.confirm(`Delete “${tk.title}” from the repository?`)) {
+                          await t.deleteTask(tk.id);
+                        }
+                      }
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
       )}
 

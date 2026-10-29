@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import { friendlyDbError } from './dbErrors';
-import type { Profile, Task, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
+import type { Profile, Task, TaskAssignment, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
 import { isAdminOrAbove } from '../lib/types';
 import { resolveTaskStatus, nextOccurrence } from './recurrence';
 
@@ -40,7 +40,15 @@ export function useTasks(profile: Profile | null) {
         .select('id,name,color,description,created_by,is_personal,owner_id,created_at')
         .order('name'),
       supabase.from('task_links').select('*').order('label'),
-      supabase.from('task_assignments').select('task_id,user_id'),
+      // Per-user completion columns may not exist yet in the DB — fall back
+      // to the legacy select so the app never breaks mid-migration.
+      supabase
+        .from('task_assignments')
+        .select('task_id,user_id,completed,completed_at,completion_note,completed_by')
+        .then(async (res) => {
+          if (!res.error) return res;
+          return supabase.from('task_assignments').select('task_id,user_id');
+        }),
     ]);
 
     const pmap = new Map<string, Profile>();
@@ -67,11 +75,22 @@ export function useTasks(profile: Profile | null) {
     }
 
     const assignMap = new Map<string, string[]>();
+    const assignmentRows = new Map<string, TaskAssignment[]>();
     if (!assignsRes.error) {
-      ((assignsRes.data ?? []) as { task_id: string; user_id: string }[]).forEach((a) => {
+      ((assignsRes.data ?? []) as any[]).forEach((a) => {
         const arr = assignMap.get(a.task_id) ?? [];
         arr.push(a.user_id);
         assignMap.set(a.task_id, arr);
+        const rows = assignmentRows.get(a.task_id) ?? [];
+        rows.push({
+          task_id: a.task_id,
+          user_id: a.user_id,
+          completed: !!a.completed,
+          completed_at: a.completed_at ?? null,
+          completion_note: a.completion_note ?? null,
+          completed_by: a.completed_by ?? null,
+        });
+        assignmentRows.set(a.task_id, rows);
       });
     }
 
@@ -86,12 +105,24 @@ export function useTasks(profile: Profile | null) {
             : r.assigned_to
               ? [r.assigned_to]
               : [];
+        // If the whole task is COMPLETED, every assignment counts as done —
+        // keeps per-assignee stats consistent even before the join-table
+        // migration backfill has run.
+        const taskDone = r.status === 'completed';
         const category = r.category_id ? catMap.get(r.category_id) ?? null : null;
+        const rawRows: TaskAssignment[] = assignmentRows.get(r.id) ?? [];
+        const asgRows: TaskAssignment[] = taskDone
+          ? rawRows.map((a) => ({ ...a, completed: true }))
+          : rawRows;
         return {
           ...r,
           days_of_week: Array.isArray(r.days_of_week) ? r.days_of_week : [],
           repeat_forever: !!r.repeat_forever,
           assignees,
+          assignments:
+            asgRows.length > 0
+              ? asgRows
+              : assignees.map((u) => ({ task_id: r.id, user_id: u, completed: taskDone })),
           assignee_profiles: assignees.map((id) => pmap.get(id)).filter(Boolean) as Profile[],
           assignee: (() => {
             const p = pmap.get(r.assigned_to);
@@ -194,27 +225,96 @@ export function useTasks(profile: Profile | null) {
   /** Effective (derived) status right now: completed | pending | overdue. */
   const statusOf = useCallback((t: Task) => resolveTaskStatus(t), []);
 
+  // ---------- Per-assignee counting ----------
+  // When N users are assigned to ONE task, the dashboard cards count that
+  // task N times — once per assignee — and each assignment carries its own
+  // completion / pending / overdue state.
+
+  /** All (task, user) assignment slices of a task list. */
+  const slicesOf = useCallback(
+    (list: Task[]): { task: Task; user_id: string; completed: boolean }[] => {
+      const out: { task: Task; user_id: string; completed: boolean }[] = [];
+      for (const t of list) {
+        const rows: TaskAssignment[] =
+          t.assignments && t.assignments.length > 0
+            ? t.assignments
+            : (t.assignees ?? [t.assigned_to]).map((u) => ({ task_id: t.id, user_id: u, completed: false }));
+        // De-duplicate by user (legacy column + join table can repeat).
+        const seen = new Set<string>();
+        for (const a of rows) {
+          if (!a.user_id || seen.has(a.user_id)) continue;
+          seen.add(a.user_id);
+          out.push({ task: t, user_id: a.user_id, completed: !!a.completed });
+        }
+      }
+      return out;
+    },
+    [],
+  );
+
+  /** Count a list of tasks per ASSIGNEE (a task with 3 users counts 3×). */
+  const countPerAssignee = useCallback(
+    (list: Task[]) => {
+      const sl = slicesOf(list);
+      return {
+        total: sl.length,
+        completed: sl.filter((s) => s.completed).length,
+        pending: sl.filter((s) => !s.completed && statusOf(s.task) === 'pending').length,
+        overdue: sl.filter((s) => !s.completed && statusOf(s.task) === 'overdue').length,
+      };
+    },
+    [slicesOf, statusOf],
+  );
+
   const stats = useMemo(() => {
-    const count = (list: Task[]) => ({
-      total: list.length,
-      completed: list.filter((t) => statusOf(t) === 'completed').length,
-      pending: list.filter((t) => statusOf(t) === 'pending').length,
-      overdue: list.filter((t) => statusOf(t) === 'overdue').length,
-    });
-    return { mine: count(assignedTasks), all: count(orgTasks), personal: count(personalTasks) };
-  }, [assignedTasks, orgTasks, personalTasks, statusOf]);
+    return {
+      mine: countPerAssignee(assignedTasks),
+      all: countPerAssignee(orgTasks),
+      personal: count(personalTasks),
+    };
+    function count(list: Task[]) {
+      return {
+        total: list.length,
+        completed: list.filter((t) => statusOf(t) === 'completed').length,
+        pending: list.filter((t) => statusOf(t) === 'pending').length,
+        overdue: list.filter((t) => statusOf(t) === 'overdue').length,
+      };
+    }
+  }, [assignedTasks, orgTasks, personalTasks, statusOf, countPerAssignee]);
 
   // ---------- Mutations ----------
 
   async function syncAssignments(taskId: string, userIds: string[]) {
+    // Preserve each user's existing certification (per-assignee counting)
+    // instead of blowing away the rows on every edit.
+    const { data: existing } = await supabase
+      .from('task_assignments')
+      .select('task_id,user_id,completed,completed_at,completion_note,completed_by')
+      .eq('task_id', taskId);
+    const keep = new Map<string, any>();
+    ((existing ?? []) as any[]).forEach((a) => keep.set(a.user_id, a));
+
     await supabase.from('task_assignments').delete().eq('task_id', taskId);
     if (userIds.length === 0) return;
-    const rows = userIds.map((user_id) => ({
-      task_id: taskId,
-      user_id,
-      assigned_by: profile?.id ?? null,
-    }));
-    await supabase.from('task_assignments').insert(rows);
+    const rows = userIds.map((user_id) => {
+      const prev = keep.get(user_id);
+      return {
+        task_id: taskId,
+        user_id,
+        assigned_by: profile?.id ?? null,
+        completed: !!prev?.completed,
+        completed_at: prev?.completed_at ?? null,
+        completion_note: prev?.completion_note ?? null,
+        completed_by: prev?.completed_by ?? null,
+      };
+    });
+    // Columns may not exist yet mid-migration → fall back to the legacy insert.
+    const { error: insErr } = await supabase.from('task_assignments').insert(rows);
+    if (insErr) {
+      await supabase
+        .from('task_assignments')
+        .insert(userIds.map((user_id) => ({ task_id: taskId, user_id, assigned_by: profile?.id ?? null })));
+    }
   }
 
   async function syncLinks(taskId: string, input: { label: string; url: string }[]) {
@@ -342,35 +442,99 @@ export function useTasks(profile: Profile | null) {
     return {};
   };
 
+  /** True when `userId` is assigned to the task (legacy column or join rows). */
+  function isAssignedTo(t: Task, userId?: string | null): boolean {
+    if (!userId) return false;
+    return t.assigned_to === userId || (t.assignees ?? []).includes(userId);
+  }
+
+  /** Whether the CURRENT USER already certified their own assignment. */
+  const myAssignmentDone = useCallback(
+    (t: Task): boolean => {
+      if (t.status === 'completed') return true;
+      const me = profile?.id;
+      if (!me) return false;
+      const rows = t.assignments ?? [];
+      const mine = rows.find((a) => a.user_id === me);
+      return !!mine?.completed;
+    },
+    [profile?.id],
+  );
+
   /**
-   * Mark a task complete. ONLY users actually assigned to the task may do it —
-   * and they must explicitly acknowledge that they are held responsible and
-   * liable once they certify a task as completed. Admins who are not assignees
-   * cannot certify completion here (they can still edit/reopen in Task Mgmt).
+   * Mark a task complete.
+   *  • Single-assignee task → completes the whole task (status flips to
+   *    COMPLETED immediately — it must NOT stay Pending).
+   *  • Multi-assignee task  → certifies ONLY the current user's slice; the
+   *    task flips to COMPLETED automatically once every assignee has
+   *    certified. Super Admins may certify/complete ANY task even when they
+   *    are not assigned (it completes the whole task in one go).
    */
   const completeTask = async (id: string, ack: { acknowledged: boolean; note?: string }) => {
     if (!ack.acknowledged) {
       return { error: 'You must acknowledge responsibility before marking a task complete.' };
     }
     const target = tasks.find((x) => x.id === id);
+    const isSuper = profile?.role === 'SUPER_ADMIN';
     if (target && profile?.id) {
-      const isAssignee =
-        target.assigned_to === profile.id || (target.assignees ?? []).includes(profile.id);
-      if (!isAssignee) {
+      const mine = isAssignedTo(target, profile.id);
+      if (!mine && !isSuper) {
         return { error: 'Only users assigned to this task can mark it as complete.' };
       }
     }
+
+    const nowIso = new Date().toISOString();
+    const assignees = target ? dedupe(target.assignees?.length ? target.assignees : [target.assigned_to]) : [];
+
+    // Multi-assignee org task + acting user is an assignee (not a Super
+    // Admin force-complete) → per-user certification first.
+    if (
+      target &&
+      !target.is_personal &&
+      assignees.length > 1 &&
+      profile?.id &&
+      isAssignedTo(target, profile.id) &&
+      !isSuper
+    ) {
+      const { error: upErr } = await supabase
+        .from('task_assignments')
+        .update({ completed: true, completed_at: nowIso, completion_note: ack.note?.trim() || null, completed_by: profile.id })
+        .eq('task_id', id)
+        .eq('user_id', profile.id);
+      if (upErr) return { error: friendlyDbError(upErr.message) };
+
+      const doneIds = new Set(
+        (target.assignments ?? []).filter((a) => a.completed || a.user_id === profile.id).map((a) => a.user_id),
+      );
+      const allDone = assignees.every((u) => doneIds.has(u));
+      if (allDone) {
+        const { error: tErr } = await supabase
+          .from('tasks')
+          .update({ status: 'completed', completed_at: nowIso, completed_by: profile.id, updated_at: nowIso })
+          .eq('id', id);
+        if (tErr) return { error: tErr.message };
+      }
+      await fetchData();
+      return {};
+    }
+
+    // Otherwise (single assignee, personal task, or Super Admin) → complete
+    // the entire task and mark every assignment row as certified.
     const { error: err } = await supabase
       .from('tasks')
       .update({
         status: 'completed',
-        completed_at: new Date().toISOString(),
+        completed_at: nowIso,
         completed_by: profile?.id ?? null,
         completion_note: ack.note?.trim() || null,
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       })
       .eq('id', id);
     if (err) return { error: err.message };
+    await supabase
+      .from('task_assignments')
+      .update({ completed: true, completed_at: nowIso, completed_by: profile?.id ?? null })
+      .eq('task_id', id);
     await fetchData();
     return {};
   };
@@ -387,6 +551,11 @@ export function useTasks(profile: Profile | null) {
       })
       .eq('id', id);
     if (err) return { error: err.message };
+    // Clear every per-user certification too so the slices count as pending.
+    await supabase
+      .from('task_assignments')
+      .update({ completed: false, completed_at: null, completion_note: null, completed_by: null })
+      .eq('task_id', id);
     await fetchData();
     return {};
   };
@@ -519,6 +688,8 @@ export function useTasks(profile: Profile | null) {
     error,
     stats,
     statusOf,
+    countPerAssignee,
+    myAssignmentDone,
     refetch: fetchData,
     createTask,
     updateTask,
