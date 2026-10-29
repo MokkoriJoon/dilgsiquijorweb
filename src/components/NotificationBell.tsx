@@ -70,12 +70,13 @@ export default function NotificationBell({
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-[360px] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
-            <p className="font-semibold text-sm text-gray-800">
-              Notifications{' '}
+        <div className="absolute right-0 mt-2 w-[360px] max-w-[calc(100vw-1.5rem)] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+            {/* flex-wrap + min-w-0 so the "N new" chip wraps below the title on tiny screens. */}
+            <p className="font-semibold text-sm text-gray-800 flex flex-wrap items-center gap-x-1 gap-y-0.5 min-w-0">
+              <span className="min-w-0 break-words">Notifications</span>
               {unreadCount > 0 && (
-                <span className="ml-1 rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-bold">
+                <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-bold whitespace-nowrap">
                   {unreadCount} new
                 </span>
               )}
@@ -135,13 +136,14 @@ export default function NotificationBell({
                               <Icon size={14} className={s.fg} />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs font-bold text-gray-800 leading-snug">
+                              {/* Long titles WRAP (break-words) — never clip off the phone screen. */}
+                              <p className="text-xs font-bold text-gray-800 leading-snug break-words">
                                 {n.title}
                                 {isUnread && (
                                   <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-blue-600 align-middle" />
                                 )}
                               </p>
-                              <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{n.body}</p>
+                              <p className="text-xs text-gray-600 mt-0.5 break-words">{n.body}</p>
                               <button onClick={openTask} className="block w-full text-left">
                                 <span className="text-[11px] text-blue-600 hover:underline mt-1 font-medium inline-block">
                                   View my tasks →

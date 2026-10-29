@@ -308,12 +308,28 @@ CREATE POLICY "Super admins edit site settings"
 --      statistics anywhere in the system (they live in their own table).
 CREATE TABLE IF NOT EXISTS public.announcements (
   id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  title       TEXT NOT NULL,
-  body        TEXT NOT NULL,
+  title       TEXT NOT NULL,                -- WHAT (headline) — REQUIRED to publish
+  body        TEXT DEFAULT '',              -- WHAT (details) — optional
   author_id   UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  -- 5W1H extras: only WHAT (title) is required; these stay optional (NULL ok).
+  whois       TEXT,                         -- WHO  is affected / involved
+  "when"      TEXT,                         -- WHEN it happens
+  whereis     TEXT,                         -- WHERE it happens
+  why         TEXT,                         -- WHY it matters / reason
+  how         TEXT                          -- HOW it will proceed / what to do
 );
+
+-- Idempotent upgrade for databases created before the 5W1H fields existed.
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS whois   TEXT;
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS "when"  TEXT;
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS whereis TEXT;
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS why     TEXT;
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS how     TEXT;
+-- Body is no longer mandatory — only WHAT (the title) must be filled in.
+ALTER TABLE public.announcements ALTER COLUMN body SET DEFAULT '';
+ALTER TABLE public.announcements ALTER COLUMN body DROP NOT NULL;
 
 ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -15,10 +15,12 @@ import {
   ArrowLeft,
   Megaphone,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { usePublicDashboard } from '../lib/usePublicDashboard';
 import type { AssignmentSlice } from '../lib/usePublicDashboard';
-import { useAnnouncements } from '../lib/useAnnouncements';
+import { useAnnouncements, fiveW1H } from '../lib/useAnnouncements';
 import type { Announcement } from '../lib/useAnnouncements';
 import { resolveTaskStatus } from '../lib/recurrence';
 import { useAuth } from '../lib/useAuth';
@@ -30,11 +32,42 @@ import type { Task, TaskFrequency } from '../lib/types';
 /** Status-card filter used by the clickable dashboard cards. */
 type PubFilter = 'all' | 'pending' | 'completed' | 'overdue';
 
+/** Auto-advance interval (ms) for the announcement preview carousel. */
+const ANNOUNCE_CAROUSEL_MS = 4500;
+
+/** One labelled row of the 5W1H breakdown (rendered only when it has content). */
+function WRow({ label, value }: { label: string; value?: string | null }) {
+  if (!value || !value.trim()) return null;
+  return (
+    <p className="text-xs text-gray-600 mt-1 leading-snug break-words">
+      <span className="font-bold text-gray-700">{label}: </span>
+      <span className="whitespace-pre-wrap">{value}</span>
+    </p>
+  );
+}
+
+/** Full 5W1H detail rows for an announcement (WHO/WHEN/WHERE/WHY/HOW). */
+function FiveWOneHRows({ a }: { a: Announcement }) {
+  const d = fiveW1H(a);
+  return (
+    <>
+      <WRow label="Who" value={d.whois} />
+      <WRow label="When" value={d.when} />
+      <WRow label="Where" value={d.whereis} />
+      <WRow label="Why" value={d.why} />
+      <WRow label="How" value={d.how} />
+    </>
+  );
+}
+
 /**
- * Header announcements widget for the public board — a bell-style button that
- * opens a dropdown listing the latest ADMIN notices (read-only). Degrades
- * gracefully: while loading, empty, or if the announcements table doesn't
- * exist yet, it shows an appropriate message instead of breaking the page.
+ * Header announcements widget for the public board — a "News" button with an
+ * auto-looping PREVIEW CAROUSEL on its left showing the latest notices
+ * (tap/click any preview to open the full list). There is intentionally NO
+ * red number/badge on the News button. Degrades gracefully: while loading,
+ * empty, or if the announcements table doesn't exist yet, it shows an
+ * appropriate message instead of breaking the page. Everything wraps/shrinks
+ * so it never clips on small phone screens.
  */
 function AnnouncementPanel({
   announcements,
@@ -44,38 +77,88 @@ function AnnouncementPanel({
   loading: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const unread = announcements.length;
+  const [idx, setIdx] = useState(0);
+  const items = announcements.slice(0, 8); // previews cycle through latest 8
+
+  // Keep the carousel index valid when the list changes (realtime updates).
+  useEffect(() => {
+    setIdx((i) => (items.length === 0 ? 0 : i % items.length));
+  }, [items.length]);
+
+  // Auto-loop to the next announcement every few seconds (only when >1 and
+  // the dropdown is closed so the visible preview stays in sync).
+  useEffect(() => {
+    if (open || items.length <= 1) return;
+    const t = window.setInterval(() => setIdx((i) => (i + 1) % items.length), ANNOUNCE_CAROUSEL_MS);
+    return () => window.clearInterval(t);
+  }, [open, items.length]);
+
+  const current = items[idx % Math.max(items.length, 1)];
 
   return (
-    <div className="relative">
+    <div className="relative flex min-w-0 max-w-full items-center justify-end gap-1.5 sm:gap-2">
+      {/* ── Preview carousel (LEFT of the News button) ── */}
+      {!loading && items.length > 0 && (
+        <div className="flex min-w-0 items-center gap-0.5 rounded-lg bg-white/10 px-1 py-0.5">
+          {items.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setIdx((i) => (i - 1 + items.length) % items.length)}
+              className="hidden sm:inline-flex p-1 rounded text-blue-200 hover:text-white hover:bg-white/10 flex-shrink-0"
+              aria-label="Previous announcement"
+            >
+              <ChevronLeft size={13} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            title={current.title}
+            aria-label={`Announcement preview: ${current.title}`}
+            className="min-w-0 max-w-[140px] sm:max-w-[220px] md:max-w-[280px] px-1 text-left"
+          >
+            <span key={current.id} className="block truncate text-[11px] sm:text-xs font-semibold text-white animate-[annFade_.6s_ease]">
+              📢 {current.title}
+            </span>
+          </button>
+          {items.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setIdx((i) => (i + 1) % items.length)}
+              className="hidden sm:inline-flex p-1 rounded text-blue-200 hover:text-white hover:bg-white/10 flex-shrink-0"
+              aria-label="Next announcement"
+            >
+              <ChevronRight size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── News button — NO red number badge ── */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         title="Announcements"
-        className="relative inline-flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-2 text-sm font-bold transition-colors"
+        className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-2 text-sm font-bold transition-colors"
       >
         <Megaphone size={14} /> News
-        {unread > 0 && (
-          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
-            {unread > 9 ? '9+' : unread}
-          </span>
-        )}
       </button>
 
       {open && (
         <>
           {/* Click-outside backdrop closes the dropdown. */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
-          <div className="absolute right-0 z-50 mt-2 w-80 max-h-96 overflow-y-auto rounded-xl bg-white text-gray-800 shadow-xl ring-1 ring-black/5">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
-              <h2 className="text-sm font-bold flex items-center gap-2 text-blue-900">
-                <Megaphone size={15} className="text-blue-600" /> Announcements
+          <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] max-h-[min(24rem,70vh)] overflow-y-auto rounded-xl bg-white text-gray-800 shadow-xl ring-1 ring-black/5">
+            <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
+              <h2 className="text-sm font-bold flex items-center gap-2 text-blue-900 min-w-0">
+                <Megaphone size={15} className="text-blue-600 flex-shrink-0" />
+                <span className="truncate">Announcements</span>
               </h2>
               <button
                 onClick={() => setOpen(false)}
                 title="Close"
-                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 flex-shrink-0"
               >
                 <X size={15} />
               </button>
@@ -90,10 +173,16 @@ function AnnouncementPanel({
               <ul className="divide-y divide-gray-100">
                 {announcements.map((an) => (
                   <li key={an.id} className="px-4 py-3">
-                    <p className="text-sm font-semibold text-gray-800 leading-snug">{an.title}</p>
-                    <p className="text-xs text-gray-600 mt-1 whitespace-pre-line break-words">
-                      {an.body}
+                    <p className="text-sm font-semibold text-gray-800 leading-snug break-words">
+                      {an.title}
                     </p>
+                    {an.body?.trim() && (
+                      <p className="text-xs text-gray-600 mt-1 whitespace-pre-line break-words">
+                        {an.body}
+                      </p>
+                    )}
+                    {/* 5W1H details (shown only when filled in) */}
+                    <FiveWOneHRows a={an} />
                     <p className="text-[10px] text-gray-400 mt-1.5">
                       {an.author_name ?? 'System'}
                       {an.created_at ? ` · ${formatDueDate(an.created_at)}` : ''}
@@ -227,11 +316,11 @@ export default function PublicDashboard() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap sm:justify-start">
             {/* NOTE: the manual Refresh button was removed — the board already
                 updates automatically via Supabase Realtime + a 60s poll. */}
-            {/* Announcements panel — sits to the LEFT of Sign Up / Sign In
-                (logged off) or Return (logged-in session). */}
+            {/* Announcements preview carousel + News panel — sits to the LEFT
+                of Sign Up / Sign In (logged off) or Return (logged-in session). */}
             <AnnouncementPanel announcements={anns.announcements} loading={anns.loading} />
             {/* Still signed in? Show a RETURN button instead of Sign Up / Sign
                 In — visiting this public board never logs anyone out, so the
@@ -239,13 +328,15 @@ export default function PublicDashboard() {
             {!authLoading && profile ? (
               <button
                 onClick={() => navigate('/app/dashboard')}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-400 hover:bg-sky-300 text-blue-950 px-3 py-2 text-sm font-bold"
+                className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-sky-400 hover:bg-sky-300 text-blue-950 px-3 py-2 text-sm font-bold"
                 title={`Return to your session as ${profile.full_name ?? 'Staff Member'}`}
               >
                 <ArrowLeft size={14} /> Return
               </button>
             ) : (
-              <>
+              /* Sign Up / Sign In stay together on one line and wrap BELOW the
+                 announcement panel on very small screens — never clipped. */
+              <div className="flex flex-wrap items-center justify-end gap-2 sm:justify-start">
                 <Link
                   to="/register"
                   className="inline-flex items-center gap-1.5 rounded-lg bg-green-500 hover:bg-green-400 text-blue-950 px-3 py-2 text-sm font-bold"
@@ -258,7 +349,7 @@ export default function PublicDashboard() {
                 >
                   <LogIn size={14} /> Sign In
                 </Link>
-              </>
+              </div>
             )}
           </div>
         </div>
