@@ -114,6 +114,8 @@ export interface Task {
    * the organization-wide totals (public board, dashboards, statistics).
    */
   is_personal?: boolean;
+  /** Owner of a personal task (null for organization tasks). */
+  owner_id?: string | null;
   created_at?: string;
   updated_at?: string;
   completed_at?: string | null;

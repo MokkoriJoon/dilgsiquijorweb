@@ -243,7 +243,7 @@ export default function TaskManagement() {
         /* SUPER ADMIN area → adding a task here creates an ORGANIZATION task,
            never a personal one (personal tasks live in "My Tasks"). */
         defaultPersonal={false}
-        lockOrgMode={!editing}
+        orgCategoriesOnly
       />
     </div>
   );

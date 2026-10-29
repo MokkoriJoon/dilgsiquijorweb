@@ -107,6 +107,28 @@ END $$;
 -- Backfill start_date from due_date for existing rows (recurrence anchor).
 UPDATE public.tasks SET start_date = due_date WHERE start_date IS NULL AND due_date IS NOT NULL;
 
+-- 2b') PERSONAL TASKS & PERSONAL CATEGORIES -----------------------------
+-- Personal items are private to their owner: they are NEVER viewable,
+-- selectable or counted system-wide (public board, dashboards, statistics).
+ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.task_categories ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE public.task_categories ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_owner_personal     ON public.tasks (owner_id) WHERE is_personal;
+CREATE INDEX IF NOT EXISTS idx_categories_owner_personal ON public.task_categories (owner_id) WHERE is_personal;
+
+-- Legacy rows: personal tasks already carried assigned_to = owner.
+UPDATE public.tasks SET owner_id = assigned_to WHERE is_personal AND owner_id IS NULL;
+
+-- A personal category's name may repeat across users, so the org-wide unique
+-- index only applies to ORGANIZATION categories now.
+DROP INDEX IF EXISTS task_categories_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS task_categories_org_name_key
+  ON public.task_categories (lower(name)) WHERE NOT is_personal;
+CREATE UNIQUE INDEX IF NOT EXISTS task_categories_personal_name_key
+  ON public.task_categories (lower(name), owner_id) WHERE is_personal;
+
 -- 2c) TASK CATEGORIES (used by the Categories page + the category dropdown)
 CREATE TABLE IF NOT EXISTS public.task_categories (
   id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -114,9 +136,10 @@ CREATE TABLE IF NOT EXISTS public.task_categories (
   color       TEXT,
   description TEXT,
   created_by  UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  is_personal BOOLEAN NOT NULL DEFAULT false,
+  owner_id    UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS task_categories_name_key ON public.task_categories (lower(name));
 
 ALTER TABLE public.tasks
   DROP CONSTRAINT IF EXISTS tasks_category_id_fkey;
@@ -205,15 +228,23 @@ ALTER TABLE public.site_settings   ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Categories viewable by authenticated" ON public.task_categories;
 DROP POLICY IF EXISTS "Categories publicly readable" ON public.task_categories;
+-- Organization categories are readable by everyone; PERSONAL categories only
+-- by their owner (never viewable or counted system-wide).
 CREATE POLICY "Categories publicly readable"
   ON public.task_categories FOR SELECT
   TO public
-  USING (true);
+  USING (NOT is_personal OR owner_id = auth.uid());
 DROP POLICY IF EXISTS "Admins manage categories" ON public.task_categories;
 CREATE POLICY "Admins manage categories"
   ON public.task_categories FOR ALL TO authenticated
   USING (public.get_current_role() IN ('ADMIN','SUPER_ADMIN'))
   WITH CHECK (public.get_current_role() IN ('ADMIN','SUPER_ADMIN'));
+-- Every authenticated user may manage their OWN personal categories.
+DROP POLICY IF EXISTS "Users manage own personal categories" ON public.task_categories;
+CREATE POLICY "Users manage own personal categories"
+  ON public.task_categories FOR ALL TO authenticated
+  USING (is_personal AND owner_id = auth.uid())
+  WITH CHECK (is_personal AND owner_id = auth.uid());
 
 DROP POLICY IF EXISTS "Links viewable by authenticated" ON public.task_links;
 DROP POLICY IF EXISTS "Links publicly readable" ON public.task_links;
@@ -371,10 +402,12 @@ CREATE POLICY "Super admins manage all profiles"
 --   • multi-assignee users rely on task_assignments, not just assigned_to.
 DROP POLICY IF EXISTS "Tasks viewable by assignee or admins" ON public.tasks;
 DROP POLICY IF EXISTS "Tasks are publicly readable" ON public.tasks;
+-- Organization tasks are readable by everyone; PERSONAL tasks only by their
+-- owner — never viewable or counted on the public board / dashboards.
 CREATE POLICY "Tasks are publicly readable"
   ON public.tasks FOR SELECT
   TO public
-  USING (true);
+  USING (NOT is_personal OR owner_id = auth.uid() OR assigned_to = auth.uid());
 
 DROP POLICY IF EXISTS "Admins and above can insert tasks" ON public.tasks;
 CREATE POLICY "Admins and above can insert tasks"
@@ -382,7 +415,8 @@ CREATE POLICY "Admins and above can insert tasks"
   TO authenticated
   WITH CHECK (
     public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN')
-    OR assigned_to = auth.uid()
+    -- Standard users may insert ONLY their own personal tasks.
+    OR (is_personal AND owner_id = auth.uid() AND assigned_to = auth.uid())
   );
 
 DROP POLICY IF EXISTS "Assignees can update own tasks" ON public.tasks;
@@ -396,6 +430,13 @@ CREATE POLICY "Admins and above can delete tasks"
   ON public.tasks FOR DELETE
   TO authenticated
   USING (public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN'));
+
+-- Owners may delete their own personal tasks (Standard users are not admins).
+DROP POLICY IF EXISTS "Owners delete own personal tasks" ON public.tasks;
+CREATE POLICY "Owners delete own personal tasks"
+  ON public.tasks FOR DELETE
+  TO authenticated
+  USING (is_personal AND owner_id = auth.uid());
 
 -- 6) WIPE ALL REGISTERED USERS (fresh start) — OPT-IN ONLY
 -- ---------------------------------------------------------------------
