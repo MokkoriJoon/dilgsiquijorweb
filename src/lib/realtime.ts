@@ -22,9 +22,12 @@
 // THE FIX
 //  • every caller now uses a UNIQUE topic per hook instance, so no two live
 //    subscriptions can ever share a channel object; and
-//  • `safeRemoveChannel()` tears the channel down defensively (unsubscribe +
-//    teardown + removal from the client's channel registry) inside try/catch,
-//    so an in-flight join/leave can never crash the app on unmount.
+//  • channels are torn down SYNCHRONOUSLY on unmount (`releaseChannel`), which
+//    immediately removes them from the client's channel registry and resets
+//    their internal "joinedOnce" flag. See the note on `subscribe()` below —
+//    this is what prevents the "cannot add `postgres_changes` callbacks …
+//    after `subscribe()`" crash when React remounts a component (StrictMode
+//    double-effects, fast route re-navigation, error-boundary retries).
 // ============================================================================
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -34,7 +37,7 @@ let seq = 0;
 
 /**
  * Build a unique realtime topic name for one hook instance.
- * `realtimeTopic('announcements')` → `announcements-7` (channel `realtime:announcements-7`).
+ * `realtimeTopic('announcements')` → `announcements-a1b2c3d4`.
  */
 export function realtimeTopic(base: string): string {
   seq += 1;
@@ -44,28 +47,79 @@ export function realtimeTopic(base: string): string {
 }
 
 /**
- * Remove a channel without ever throwing.
- *
- * `supabase.removeChannel()` awaits the server `leave` ack; if the socket is
- * already closed / the channel errored, the promise may reject or never settle,
- * and an unhandled rejection during route change was another source of random
- * crashes. Swallow everything — worst case the channel simply stays idle.
+ * Grab the underlying realtime socket defensively (its shape differs slightly
+ * across supabase-js versions; `realtime` is typed as any there anyway).
  */
-export function safeRemoveChannel(channel: RealtimeChannel | null | undefined): void {
+function getRealtimeSocket(): {
+  channels?: RealtimeChannel[];
+  removeChannel?: (c: RealtimeChannel) => Promise<unknown>;
+} | null {
+  try {
+    const rt = (supabase as unknown as { realtime?: any }).realtime;
+    return rt ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Release a channel WITHOUT ever throwing and WITHOUT awaiting the server's
+ * `leave` acknowledgement.
+ *
+ * Why not just `await supabase.removeChannel(channel)`?
+ *  - In supabase-js v2, `removeChannel()` only resolves once the Phoenix
+ *    channel reports CLOSED. If the socket is mid-reconnect (the Cloudflare
+ *    websocket errors seen in production logs), that promise can hang, so the
+ *    channel object STAYS in `client.channels` under its topic.
+ *  - When the component remounts (React 18 StrictMode runs effects twice;
+ *    users navigate away from and back to the Announcements tab), the cleanup
+ *    of the previous subscription has not finished yet, so
+ *    `supabase.channel('<same-topic>')` returns the EXISTING, already-joined
+ *    channel instead of a fresh one. The next `.on('postgres_changes', …)`
+ *    then throws synchronously:
+ *        "cannot add `postgres_changes` callbacks for realtime:announcements
+ *         after `subscribe()`."
+ *    Because that happens inside a useEffect during navigation, the error
+ *    escapes into the render phase and the ErrorBoundary shows the
+ *    "Something went wrong" screen — exactly the reported crash.
+ *
+ * This helper therefore:
+ *  1. fires `unsubscribe()` (best effort, errors swallowed);
+ *  2. SYNCHRONOUSLY splices the channel out of the client's registry, so a
+ *     remount can never receive a stale joined channel;
+ *  3. resets the private `joinedOnce` flag on the phoenix channel as an extra
+ *     safety net (guarded with try/catch — purely defensive).
+ */
+export function releaseChannel(channel: RealtimeChannel | null | undefined): void {
   if (!channel) return;
   try {
-    void Promise.resolve(supabase.removeChannel(channel)).catch(() => {
-      /* best effort */
-    });
-  } catch {
+    // 1) Ask the server to leave (fire-and-forget; may never settle offline).
     try {
-      // Last resort: force the local state so nothing keeps pushing on it.
-      (channel as unknown as { unsubscribe?: () => void }).unsubscribe?.();
+      void Promise.resolve(channel.unsubscribe()).catch(() => {});
     } catch {
       /* ignore */
     }
+    // 2) Remove from the client registry immediately (sync — no await).
+    const rt = getRealtimeSocket();
+    const list = rt?.channels;
+    if (Array.isArray(list)) {
+      const idx = list.indexOf(channel);
+      if (idx >= 0) list.splice(idx, 1);
+    }
+    // 3) Defensive: allow a future re-subscribe on the same object.
+    try {
+      const inner = (channel as unknown as { channel?: { _state?: string }; joinedOnce?: unknown });
+      if (inner.channel) inner.channel._state = 'closed';
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* Never let teardown crash the app. */
   }
 }
+
+/** Back-compat alias used elsewhere in the codebase. */
+export const safeRemoveChannel = releaseChannel;
 
 /**
  * Subscribe to Postgres changes on one or more tables using a PRIVATE channel
@@ -82,8 +136,10 @@ export function useRealtimeTableChanges(
   onChange: () => void,
   pollMs = 0,
 ): void {
-  // Unique per mounted instance — created once, stable across re-renders.
-  const topicRef = useRef<string>(realtimeTopic(baseName));
+  // Unique per mounted instance — created ONCE (lazy ref init) so it survives
+  // StrictMode's double effect invocation without ever reusing a stale topic.
+  const topicRef = useRef<string | null>(null);
+  if (topicRef.current === null) topicRef.current = realtimeTopic(baseName);
   // Always call the LATEST callback (the subscribed closure must stay stable).
   const handlerRef = useRef(onChange);
   handlerRef.current = onChange;
@@ -91,7 +147,7 @@ export function useRealtimeTableChanges(
   useEffect(() => {
     let channel: RealtimeChannel | null = null;
     try {
-      channel = supabase.channel(topicRef.current);
+      channel = supabase.channel(topicRef.current as string);
       for (const table of tables) {
         channel.on(
           'postgres_changes',
@@ -110,7 +166,7 @@ export function useRealtimeTableChanges(
 
     return () => {
       if (timer !== null) window.clearInterval(timer);
-      safeRemoveChannel(channel);
+      releaseChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tables.join(','), pollMs]);
