@@ -240,7 +240,7 @@ export function useTasks(profile: Profile | null) {
         const rows: TaskAssignment[] =
           t.assignments && t.assignments.length > 0
             ? t.assignments
-            : (t.assignees ?? [t.assigned_to]).map((u) => ({ task_id: t.id, user_id: u, completed: false }));
+            : (t.assignees ?? (t.assigned_to ? [t.assigned_to] : [])).filter((u): u is string => !!u).map((u) => ({ task_id: t.id, user_id: u, completed: false }));
         // De-duplicate by user (legacy column + join table can repeat).
         const seen = new Set<string>();
         for (const a of rows) {
@@ -358,7 +358,7 @@ export function useTasks(profile: Profile | null) {
     days_of_week?: number[];
     repeat_forever?: boolean;
     category_id?: string | null;
-    assigned_to: string;
+    assigned_to: string | null;
     assignees?: string[];
     links?: { label: string; url: string }[];
     /** Personal task → only visible to its owner, never counted system-wide. */
@@ -376,7 +376,9 @@ export function useTasks(profile: Profile | null) {
       };
     }
 
-    let assignees = dedupe([input.assigned_to, ...(input.assignees ?? [])].filter(Boolean));
+    let assignees = dedupe(
+      [input.assigned_to, ...(input.assignees ?? [])].filter((u): u is string => !!u),
+    );
     // Personal tasks belong exclusively to their creator/owner.
     if (input.is_personal && profile?.id) assignees = [profile.id];
     // Standard users can never assign a task to somebody else.
@@ -397,6 +399,8 @@ export function useTasks(profile: Profile | null) {
       status: 'pending',
       assigned_to: assignees[0],
       assigned_by: profile?.id ?? null,
+      // Attribution survives the creator's login being deleted (SET NULL FK).
+      created_by: profile?.id ?? null,
       category_id: input.category_id || null,
       is_personal: !!input.is_personal,
       // Personal items carry their owner so RLS keeps them private.
@@ -564,7 +568,9 @@ export function useTasks(profile: Profile | null) {
     }
 
     const nowIso = new Date().toISOString();
-    const assignees = target ? dedupe(target.assignees?.length ? target.assignees : [target.assigned_to]) : [];
+    const assignees = target
+      ? dedupe((target.assignees?.length ? target.assignees : [target.assigned_to]).filter((u): u is string => !!u))
+      : [];
 
     // Multi-assignee org task + acting user is an assignee (not a Super
     // Admin force-complete) → per-user certification first.

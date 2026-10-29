@@ -26,7 +26,8 @@ interface Ctx {
  * Names that match a registered user (case-insensitive) are rendered as
  * checkboxes; anything else goes through the "Others" free-text field.
  */
-function splitWho(v: string): string[] {
+function splitWho(v: string | null | undefined): string[] {
+  if (!v) return [];
   return Array.from(
     new Set(
       v
@@ -255,13 +256,15 @@ function formatClockTime(hhmm: string): string {
 }
 
 /** Extract a yyyy-mm-dd date from a stored WHEN string (if it has one). */
-function extractDate(str: string): string {
+function extractDate(str: string | null | undefined): string {
+  if (!str) return '';
   const m = str.match(/(\d{4})-(\d{2})-(\d{2})/);
   return m ? m[0] : '';
 }
 
 /** Extract an HH:mm time from a stored WHEN string (if it has one). */
-function extractTime(str: string): string {
+function extractTime(str: string | null | undefined): string {
+  if (!str) return '';
   const m = str.match(/\b(\d{1,2}):(\d{2})\b/);
   if (!m) return '';
   return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
@@ -376,7 +379,7 @@ function AnnouncementFormModal({
   const [whenTime, setWhenTime] = useState(() => extractTime(d.when));
   /** Extra note kept alongside the picked date/time (e.g. "Assembly grounds"). */
   const [whenNote, setWhenNote] = useState(() => {
-    let rest = d.when;
+    let rest = d.when ?? '';
     rest = rest.replace(/\d{4}-\d{2}-\d{2}/g, '');
     rest = rest.replace(/\b\d{1,2}:\d{2}(:\d{2})?\s*([APap]\.?[Mm]\.?)?\b/g, '');
     return rest.replace(/[·|,-]\s*$/, '').replace(/^\s*[·|,-]/, '').trim();

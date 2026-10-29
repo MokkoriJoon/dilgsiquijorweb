@@ -168,7 +168,7 @@ export default function MyTasks() {
       const rows =
         task.assignments && task.assignments.length > 0
           ? task.assignments
-          : (task.assignees ?? [task.assigned_to]).map((u) => ({
+          : (task.assignees ?? (task.assigned_to ? [task.assigned_to] : [])).map((u) => ({
               task_id: task.id,
               user_id: u ?? '',
               completed: false,

@@ -115,9 +115,13 @@ export interface Task {
   days_of_week: number[] | null;
   repeat_forever: boolean;
   status: TaskStatus;
-  /** Legacy single-assignee column (kept in sync with assignments[0]). */
-  assigned_to: string;
+  /** Legacy single-assignee column (kept in sync with assignments[0]).
+   *  Nullable: deleting an assignee's login no longer destroys the task. */
+  assigned_to: string | null;
   assigned_by: string | null;
+  /** Who created the task — kept even after their login is deleted
+   *  (FK ON DELETE SET NULL), so content outlives the account. */
+  created_by?: string | null;
   category_id: string | null;
   /**
    * Personal task flag — tasks created by a user for THEMSELVES (e.g. a

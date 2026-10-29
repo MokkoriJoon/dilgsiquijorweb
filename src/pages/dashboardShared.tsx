@@ -27,7 +27,7 @@ export function draftToPayload(draft: {
     days_of_week: draft.days_of_week,
     repeat_forever: draft.repeat_forever,
     category_id: draft.category_id || null,
-    assigned_to: draft.assignees[0],
+    assigned_to: draft.assignees[0] ?? null,
     assignees: draft.assignees,
     links: draft.links,
     status: draft.status,
