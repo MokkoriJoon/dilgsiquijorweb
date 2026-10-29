@@ -201,14 +201,9 @@ export default function MyTasks() {
           >
             <RefreshCw size={14} /> Refresh
           </button>
-          {/* Personal tasks: allowed for EVERY role (private, not system-wide). */}
-          <button
-            onClick={() => openCreate(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-sm font-medium"
-            title="Add a private task that only you can see"
-          >
-            <Plus size={15} /> Add New Personal Task
-          </button>
+          {/* Personal tasks: allowed for EVERY role (private, not system-wide).
+              NOTE: the top "+Add New Personal Task" button was removed — personal
+              tasks are added from the Personal Tasks section below. */}
           {/* Organization/system tasks: Admins & Super Admins ONLY. */}
           {isAdminOrAbove && (
             <button
@@ -334,7 +329,7 @@ export default function MyTasks() {
             onClick={() => openCreate(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-700 px-3 py-1.5 text-sm font-medium"
           >
-            <Plus size={14} /> Add New Task
+            <Plus size={14} /> Add New Personal Task
           </button>
         </div>
 
@@ -399,7 +394,7 @@ export default function MyTasks() {
             </p>
             {!personalFiltersActive && (
               <p className="text-sm text-gray-400 mt-1">
-                Use “Add New Task” above to keep private reminders for yourself.
+                Use “Add New Personal Task” above to keep private reminders for yourself.
               </p>
             )}
           </div>
@@ -413,7 +408,7 @@ export default function MyTasks() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         task={null}
-        categories={t.categories}
+        categories={t.categoriesForTasks}
         profiles={t.profiles}
         role={profile.role}
         currentUserId={profile.id}
@@ -430,7 +425,7 @@ export default function MyTasks() {
         open={!!statusTask}
         onClose={() => setStatusTask(null)}
         task={statusTask}
-        categories={t.categories}
+        categories={t.categoriesForTasks}
         profiles={t.profiles}
         role={profile.role}
         currentUserId={profile.id}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, RefreshCw, AlertTriangle, X } from 'lucide-react';
+import { RefreshCw, AlertTriangle, X } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { friendlyDbError } from '../lib/dbErrors';
@@ -23,6 +23,10 @@ interface Ctx {
  *      Pending + Daily   → only pending daily tasks.
  *      Overdue + Monthly → only overdue monthly tasks.
  *  • Clicking the active card again resets ALL filters (fixed reset).
+ *  • NO "+ New Task" button here for any role — creating organization tasks
+ *    lives in SUPER ADMIN areas (Task Management) and personal task creation
+ *    lives in "My Tasks". This dashboard also never counts or lists other
+ *    users' PERSONAL tasks/categories (RLS + client-side filtering).
  */
 export default function AppDashboard() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
@@ -91,15 +95,9 @@ export default function AppDashboard() {
           >
             <RefreshCw size={14} /> Refresh
           </button>
-          <button
-            onClick={() => {
-              setEditing(null);
-              setModalOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium"
-          >
-            <Plus size={15} /> New Task
-          </button>
+          {/* "+ New Task" intentionally REMOVED for every role — personal task
+              creation happens in "My Tasks"; organization tasks are created by
+              Super Admins in Task Management. */}
         </div>
       </div>
 
@@ -186,7 +184,7 @@ export default function AppDashboard() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         task={editing}
-        categories={t.categories}
+        categories={t.categoriesForTasks}
         profiles={t.profiles}
         onSubmit={handleSubmit}
         onCategoryCreated={() => t.refetch()}

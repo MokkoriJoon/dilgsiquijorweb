@@ -118,6 +118,9 @@ interface Props {
   defaultPersonal?: boolean;
   /** Hide the personal/system toggle (e.g. inside the Personal Tasks section). */
   lockPersonal?: boolean;
+  /** Only offer ORGANIZATION categories in the dropdown (Task Management /
+   *  Super Admin area — personal categories live in "My Tasks"). */
+  orgCategoriesOnly?: boolean;
 }
 
 export default function TaskFormModal({
@@ -133,6 +136,7 @@ export default function TaskFormModal({
   currentUserId,
   defaultPersonal = false,
   lockPersonal = false,
+  orgCategoriesOnly = false,
 }: Props) {
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft());
   const [newCatName, setNewCatName] = useState('');
@@ -146,6 +150,13 @@ export default function TaskFormModal({
   const personalOnly = !canCreateOrgTasks;
   /** Editing an existing personal task keeps it personal. */
   const editingPersonal = !!task?.is_personal;
+  /** SUPER ADMIN / Task Management area → always ORGANIZATION tasks. */
+  const forceOrg = orgCategoriesOnly && !personalOnly;
+
+  /** Category options shown in the dropdown — defensive against undefined. */
+  const categoryOptions = (Array.isArray(categories) ? categories : []).filter(
+    (c) => !orgCategoriesOnly || !c.is_personal,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -155,10 +166,15 @@ export default function TaskFormModal({
     if (task) {
       setDraft(draftFromTask(task));
     } else {
-      const asPersonal = personalOnly || defaultPersonal;
-      setDraft(asPersonal ? emptyDraft(currentUserId, true) : emptyDraft(currentUserId, false));
+      if (forceOrg) {
+        // Task Management (Admins/Super Admins) → ORGANIZATION task, never personal.
+        setDraft({ ...emptyDraft(currentUserId, false), assignees: currentUserId ? [currentUserId] : [] });
+      } else {
+        const asPersonal = personalOnly || defaultPersonal;
+        setDraft(asPersonal ? emptyDraft(currentUserId, true) : emptyDraft(currentUserId, false));
+      }
     }
-  }, [open, task, personalOnly, defaultPersonal, currentUserId]);
+  }, [open, task, personalOnly, defaultPersonal, currentUserId, forceOrg]);
 
   /** Toggle between "Personal" and "Organization" task type (admins only). */
   function setPersonal(value: boolean) {
@@ -194,19 +210,27 @@ export default function TaskFormModal({
 
   async function addCategory() {
     if (!canCreateOrgTasks) {
-      setError('Only Admins and Super Admins can create task categories.');
+      setError('Only Admins and Super Admins can create organization task categories.');
       return;
     }
     const name = newCatName.trim();
     if (!name) return;
-    if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    if (categoryOptions.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
       setError(`Category “${name}” already exists.`);
       return;
     }
-    const color = CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length];
+    const color = CATEGORY_COLORS[categoryOptions.length % CATEGORY_COLORS.length];
     const { data, error: err } = await supabase
       .from('task_categories')
-      .insert({ name, color, description: null, created_by: currentUserId ?? null })
+      .insert({
+        name,
+        color,
+        description: null,
+        created_by: currentUserId ?? null,
+        // Created from this admin surface → always an ORGANIZATION category.
+        is_personal: false,
+        owner_id: null,
+      })
       .select()
       .single();
     if (err) {
@@ -381,9 +405,10 @@ export default function TaskFormModal({
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white"
               >
                 <option value="">No category</option>
-                {categories.map((c) => (
+                {categoryOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                    {c.is_personal ? ' (Personal)' : ''}
                   </option>
                 ))}
               </select>

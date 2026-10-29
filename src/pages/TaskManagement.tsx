@@ -17,10 +17,13 @@ interface Ctx {
 }
 
 /**
- * Task Management — the global repository of ALL tasks (for reusability and
- * global edit). Admins & Super Admins can create/edit/delete any task here;
+ * Task Management — the SUPER ADMIN area for ORGANIZATION tasks (global edit
+ * and reuse). Admins & Super Admins can create/edit/delete any task here;
  * standard users get a read-only view. Overdue items float to the top.
  * Status cards + frequency buttons combine (e.g. Pending + Daily).
+ *
+ * Personal tasks & personal categories are NEVER listed or counted here —
+ * they belong exclusively to their owner (see useTasks / RLS in schema.sql).
  */
 export default function TaskManagement() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
@@ -46,7 +49,9 @@ export default function TaskManagement() {
   }
 
   const list = useMemo(() => {
-    let items = t.tasks; // every visible task = the repository
+    // SUPER ADMIN repository = ORGANIZATION tasks ONLY. Personal tasks are
+    // private to their owner and never listed or counted here.
+    let items = t.orgTasks;
     if (filter !== 'all') items = items.filter((x) => t.statusOf(x) === filter);
     if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
     if (q.trim()) {
@@ -59,17 +64,17 @@ export default function TaskManagement() {
       );
     }
     return items;
-  }, [t.tasks, t.statusOf, filter, freqs, q]);
+  }, [t.orgTasks, t.statusOf, filter, freqs, q]);
 
   /** Per-frequency counts within the currently selected status card. */
   const freqCounts = useMemo(() => {
-    const base = filter === 'all' ? t.tasks : t.tasks.filter((x) => t.statusOf(x) === filter);
+    const base = filter === 'all' ? t.orgTasks : t.orgTasks.filter((x) => t.statusOf(x) === filter);
     const map: Partial<Record<TaskFrequency, number>> = {};
     base.forEach((x) => {
       map[x.frequency] = (map[x.frequency] ?? 0) + 1;
     });
     return map;
-  }, [t.tasks, t.statusOf, filter]);
+  }, [t.orgTasks, t.statusOf, filter]);
 
   const filtersActive = filter !== 'all' || freqs.length > 0;
 
@@ -96,7 +101,8 @@ export default function TaskManagement() {
             Task Management
           </h1>
           <p className="text-sm text-gray-500">
-            All tasks ever created — the office repository for reuse and global editing.
+            All ORGANIZATION tasks ever created — the office repository for reuse and global
+            editing. Personal tasks are private to their owner and never appear here.
           </p>
         </div>
         <div className="flex gap-2">
@@ -113,8 +119,9 @@ export default function TaskManagement() {
                 setModalOpen(true);
               }}
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium"
+              title="Create an official ORGANIZATION task (counted system-wide)"
             >
-              <Plus size={15} /> New Task
+              <Plus size={15} /> New Organization Task
             </button>
           )}
         </div>
@@ -122,7 +129,8 @@ export default function TaskManagement() {
 
       {!isAdminOrAbove && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-700">
-          Read-only repository view. Only Admins and Super Admins can edit or delete tasks globally.
+          Read-only repository view of organization tasks. Only Admins and Super Admins can edit or
+          delete tasks globally.
         </div>
       )}
 
@@ -225,11 +233,17 @@ export default function TaskManagement() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         task={editing}
-        categories={t.categories}
+        categories={t.categoriesForTasks}
         profiles={t.profiles}
         onSubmit={handleSubmit}
         onCategoryCreated={() => t.refetch()}
         canEditDetails={isAdminOrAbove}
+        role={profile?.role}
+        currentUserId={profile?.id}
+        /* SUPER ADMIN area → adding a task here creates an ORGANIZATION task,
+           never a personal one (personal tasks live in "My Tasks"). */
+        defaultPersonal={false}
+        orgCategoriesOnly
       />
     </div>
   );

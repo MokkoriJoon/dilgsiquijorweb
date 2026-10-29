@@ -8,7 +8,7 @@ import { resolveTaskStatus, nextOccurrence } from './recurrence';
 
 /** Columns selected from the tasks table. */
 const TASK_SELECT =
-  'id,title,description,due_date,start_date,frequency,days_of_week,repeat_forever,status,assigned_to,assigned_by,category_id,is_personal,created_at,updated_at,completed_at,completion_note,completed_by';
+  'id,title,description,due_date,start_date,frequency,days_of_week,repeat_forever,status,assigned_to,assigned_by,category_id,is_personal,owner_id,created_at,updated_at,completed_at,completion_note,completed_by';
 
 interface LinkRow {
   id: string;
@@ -33,7 +33,12 @@ export function useTasks(profile: Profile | null) {
     const [tasksRes, profilesRes, catsRes, linksRes, assignsRes] = await Promise.all([
       supabase.from('tasks').select(TASK_SELECT).order('created_at', { ascending: false }),
       supabase.from('profiles').select('*').order('full_name'),
-      supabase.from('task_categories').select('*').order('name'),
+      // Personal categories carry is_personal/owner_id; RLS (schema.sql) only
+      // returns them to their owner, so other users never see or count them.
+      supabase
+        .from('task_categories')
+        .select('id,name,color,description,created_by,is_personal,owner_id,created_at')
+        .order('name'),
       supabase.from('task_links').select('*').order('label'),
       supabase.from('task_assignments').select('task_id,user_id'),
     ]);
@@ -158,6 +163,34 @@ export function useTasks(profile: Profile | null) {
   /** The current user's PERSONAL tasks — private, never counted system-wide. */
   const personalTasks = useMemo(() => myTasks.filter((t) => !!t.is_personal), [myTasks]);
 
+  // ---------- Categories (organization vs personal) ----------
+
+  /** True when a category row belongs to the current user personally. */
+  const isOwnPersonalCategory = useCallback(
+    (c: TaskCategory) => !!c.is_personal && c.owner_id === profile?.id,
+    [profile?.id],
+  );
+
+  /** ORGANIZATION categories only — what admins manage & what is counted
+   *  system-wide. Personal categories are NEVER included here. */
+  const orgCategories = useMemo(
+    () => categories.filter((c) => !c.is_personal),
+    [categories],
+  );
+
+  /** The current user's OWN personal categories (private). */
+  const personalCategories = useMemo(
+    () => categories.filter(isOwnPersonalCategory),
+    [categories, isOwnPersonalCategory],
+  );
+
+  /** Categories usable by the current user: organization + own personal ones.
+   *  Other people's personal categories are invisible/unselectable. */
+  const categoriesForTasks = useMemo(
+    () => categories.filter((c) => !c.is_personal || isOwnPersonalCategory(c)),
+    [categories, isOwnPersonalCategory],
+  );
+
   /** Effective (derived) status right now: completed | pending | overdue. */
   const statusOf = useCallback((t: Task) => resolveTaskStatus(t), []);
 
@@ -247,6 +280,8 @@ export function useTasks(profile: Profile | null) {
       assigned_by: profile?.id ?? null,
       category_id: input.category_id || null,
       is_personal: !!input.is_personal,
+      // Personal items carry their owner so RLS keeps them private.
+      owner_id: input.is_personal ? profile?.id ?? null : null,
     };
 
     const { data, error: err } = await supabase
@@ -369,13 +404,25 @@ export function useTasks(profile: Profile | null) {
     name: string;
     color?: string;
     description?: string;
+    /** Personal category → visible only to its owner, never counted system-wide. */
+    is_personal?: boolean;
   }) => {
     if (!input.name.trim()) return { error: 'Category name is required.' };
+    // Only Admins / Super Admins may raise ORGANIZATION categories; everyone
+    // may create their own PRIVATE personal categories.
+    if (!input.is_personal && !isAdminOrAbove(profile?.role)) {
+      return {
+        error:
+          'Standard users cannot create organization categories. Please create a Personal Category instead.',
+      };
+    }
     const { error: err } = await supabase.from('task_categories').insert({
       name: input.name.trim(),
       color: input.color ?? null,
       description: input.description?.trim() || null,
       created_by: profile?.id ?? null,
+      is_personal: !!input.is_personal,
+      owner_id: input.is_personal ? profile?.id ?? null : null,
     });
     if (err) return { error: err.message };
     await fetchData();
@@ -404,7 +451,12 @@ export function useTasks(profile: Profile | null) {
     assignedTasks,
     personalTasks,
     profiles,
+    // `categories` stays the RAW fetch result (never undefined) so every
+    // consumer can safely call `.map()` on it. Use the derived lists below:
     categories,
+    orgCategories,
+    personalCategories,
+    categoriesForTasks,
     links,
     profileById,
     categoryById,

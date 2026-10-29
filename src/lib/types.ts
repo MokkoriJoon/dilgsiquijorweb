@@ -64,6 +64,15 @@ export interface TaskCategory {
   color: string | null;
   description: string | null;
   created_by: string | null;
+  /**
+   * Personal category flag — a category a user created for their OWN personal
+   * tasks. Personal categories are only visible to their owner and are NEVER
+   * listed or counted system-wide (organization categories page, public
+   * board, dashboards, statistics).
+   */
+  is_personal?: boolean;
+  /** Owner of a personal category (null for organization categories). */
+  owner_id?: string | null;
   created_at?: string;
 }
 
@@ -105,6 +114,8 @@ export interface Task {
    * the organization-wide totals (public board, dashboards, statistics).
    */
   is_personal?: boolean;
+  /** Owner of a personal task (null for organization tasks). */
+  owner_id?: string | null;
   created_at?: string;
   updated_at?: string;
   completed_at?: string | null;

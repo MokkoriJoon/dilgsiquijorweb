@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, Tags, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Tags, Pencil, Trash2, Loader2, User } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { CATEGORY_COLORS, DEFAULT_CATEGORIES } from '../lib/taskMeta';
@@ -13,9 +13,13 @@ interface Ctx {
 }
 
 /**
- * Task Categories — Admins & Super Admins create categories such as
- * "Reporting" and "Peace & Order" (DILG Siquijor). Categories are selectable
+ * Task Categories — Admins & Super Admins create ORGANIZATION categories such
+ * as "Reporting" and "Peace & Order" (DILG Siquijor). Categories are selectable
  * when adding/assigning tasks. A one-click option seeds the DILG defaults.
+ *
+ * Every user may also create PRIVATE PERSONAL CATEGORIES below — these pair
+ * with Personal Tasks and are visible ONLY to their owner. They never appear
+ * on the organization list above and are never counted system-wide.
  */
 export default function Categories() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
@@ -27,15 +31,20 @@ export default function Categories() {
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  // Personal-category form state (available to ALL roles)
+  const [pName, setPName] = useState('');
+  const [pColor, setPColor] = useState(CATEGORY_COLORS[0]);
+  const [pError, setPError] = useState('');
+  const [pBusy, setPBusy] = useState(false);
 
   async function add() {
     setError('');
     if (!name.trim()) return setError('Category name is required.');
-    if (t.categories.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
+    if (t.orgCategories.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
       return setError(`Category “${name.trim()}” already exists.`);
     }
     setBusy(true);
-    const res = await t.createCategory({ name, color, description });
+    const res = await t.createCategory({ name, color, description, is_personal: false });
     setBusy(false);
     if (res.error) setError(res.error);
     else {
@@ -44,12 +53,26 @@ export default function Categories() {
     }
   }
 
+  /** Create a private personal category (owner-only, never counted system-wide). */
+  async function addPersonal() {
+    setPError('');
+    if (!pName.trim()) return setPError('Personal category name is required.');
+    if (t.categoriesForTasks.some((c) => c.name.toLowerCase() === pName.trim().toLowerCase())) {
+      return setPError(`Category “${pName.trim()}” already exists.`);
+    }
+    setPBusy(true);
+    const res = await t.createCategory({ name: pName, color: pColor, is_personal: true });
+    setPBusy(false);
+    if (res.error) setPError(res.error);
+    else setPName('');
+  }
+
   async function seedDefaults() {
     setBusy(true);
     setError('');
     for (const def of DEFAULT_CATEGORIES) {
-      if (t.categories.some((c) => c.name.toLowerCase() === def.name.toLowerCase())) continue;
-      const res = await t.createCategory(def);
+      if (t.orgCategories.some((c) => c.name.toLowerCase() === def.name.toLowerCase())) continue;
+      const res = await t.createCategory({ ...def, is_personal: false });
       if (res.error) {
         setError(res.error);
         break;
@@ -153,7 +176,7 @@ export default function Categories() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {t.categories.map((cat) => {
+        {t.orgCategories.map((cat) => {
           const count = t.categoryTaskCount.get(cat.id) ?? 0;
           const c = cat.color ?? '#64748b';
           return (
@@ -214,7 +237,7 @@ export default function Categories() {
             </div>
           );
         })}
-        {t.categories.length === 0 && (
+        {t.orgCategories.length === 0 && (
           <div className="col-span-full bg-white rounded-xl border border-dashed border-gray-200 py-12 text-center">
             <p className="text-gray-500 font-medium">No categories yet.</p>
             <p className="text-sm text-gray-400 mt-1">
@@ -223,6 +246,113 @@ export default function Categories() {
           </div>
         )}
       </div>
+
+      {/* ═════════ PERSONAL CATEGORIES (private — owner only) ═════════ */}
+      <section className="mt-10">
+        <h2 className="text-base font-bold text-gray-800 flex items-center gap-2 mb-1">
+          <User size={17} className="text-violet-600" />
+          My Personal Categories
+          <span className="rounded-full bg-violet-100 text-violet-700 text-[11px] font-semibold px-2 py-0.5">
+            {t.personalCategories.length}
+          </span>
+        </h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Private categories that coordinate with your <strong>Personal Tasks</strong>. They are
+          visible <strong>only to you</strong> and are never listed or counted system-wide.
+        </p>
+
+        <div className="bg-white rounded-xl border border-violet-200 shadow-sm p-5 mb-6">
+          <h3 className="font-semibold text-gray-800 mb-3 text-sm">New Personal Category</h3>
+          {pError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-sm text-red-700">
+              {pError}
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <input
+              value={pName}
+              onChange={(e) => setPName(e.target.value)}
+              placeholder="Name * (e.g., My Reminders)"
+              className="sm:col-span-6 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-500 outline-none"
+              onKeyDown={(e) => e.key === 'Enter' && addPersonal()}
+            />
+            <select
+              value={pColor}
+              onChange={(e) => setPColor(e.target.value)}
+              className="sm:col-span-3 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+              title="Badge colour"
+            >
+              {NAMED_CATEGORY_COLORS.map((c) => (
+                <option key={c.hex} value={c.hex}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <span
+              className="sm:col-span-1 inline-flex items-center justify-center rounded-lg border border-gray-200"
+              title={`Selected colour: ${colorNameFor(pColor)}`}
+            >
+              <span className="w-6 h-6 rounded-md" style={{ backgroundColor: pColor }} />
+            </span>
+            <button
+              onClick={addPersonal}
+              disabled={pBusy}
+              className="sm:col-span-2 inline-flex justify-center items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {pBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {t.personalCategories.map((cat) => {
+            const count = t.categoryTaskCount.get(cat.id) ?? 0;
+            const c = cat.color ?? '#64748b';
+            return (
+              <div
+                key={cat.id}
+                className="bg-white rounded-xl border border-violet-100 shadow-sm p-4"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold"
+                    style={{ color: c, backgroundColor: `${c}18` }}
+                  >
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c }} />
+                    {cat.name}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      if (
+                        window.confirm(
+                          `Delete personal category “${cat.name}”? Its ${count} personal task(s) will become uncategorized.`,
+                        )
+                      ) {
+                        await t.deleteCategory(cat.id);
+                      }
+                    }}
+                    className="p-1.5 rounded text-red-500 hover:bg-red-50"
+                    title="Delete"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-2">
+                  {count} personal task(s) · Private
+                </p>
+              </div>
+            );
+          })}
+          {t.personalCategories.length === 0 && (
+            <div className="col-span-full bg-white rounded-xl border border-dashed border-violet-200 py-10 text-center">
+              <p className="text-gray-500 font-medium text-sm">No personal categories yet.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Create one above to organize your personal tasks.
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
