@@ -303,6 +303,32 @@ CREATE POLICY "Super admins edit site settings"
   USING (public.get_current_role() = 'SUPER_ADMIN')
   WITH CHECK (public.get_current_role() = 'SUPER_ADMIN');
 
+-- 2h2) ANNOUNCEMENTS — notices posted by ADMIN / SUPER_ADMIN only.
+--      NOT tasks: no completion status, never counted in any task totals or
+--      statistics anywhere in the system (they live in their own table).
+CREATE TABLE IF NOT EXISTS public.announcements (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  author_id   UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Announcements publicly readable" ON public.announcements;
+CREATE POLICY "Announcements publicly readable"
+  ON public.announcements FOR SELECT USING (true);  -- shown on the public board ticker
+
+DROP POLICY IF EXISTS "Admins manage announcements" ON public.announcements;
+CREATE POLICY "Admins manage announcements"
+  ON public.announcements FOR ALL TO authenticated
+  USING (public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN'))
+  WITH CHECK (public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN'));
+
+CREATE INDEX IF NOT EXISTS idx_announcements_created ON public.announcements (created_at DESC);
+
 -- 2i) REALTIME — lets the public dashboard & task boards update live.
 --     Wrapped so re-running the script never errors ("already member of publication").
 DO $$
@@ -310,6 +336,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.tasks; EXCEPTION WHEN duplicate_object THEN NULL; END;
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.task_categories; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.announcements; EXCEPTION WHEN duplicate_object THEN NULL; END;
   END IF;
 END $$;
 
