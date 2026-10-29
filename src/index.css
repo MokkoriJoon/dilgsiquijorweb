@@ -40,3 +40,29 @@ li {
     transform: translateY(0);
   }
 }
+
+/* Entrance of the Announcement / Notification modal — the centred pop-up that
+   delivers alerts, news updates and "read this new announcement" invitations.
+   Scales up slightly from the centre so it always stays screen-centred. */
+@keyframes annModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Thin, unobtrusive scrollbar inside scrollable modals (WebKit/Blink). */
+.ann-modal-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.ann-modal-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(203 213 225); /* slate-300 */
+  border-radius: 9999px;
+}
+.ann-modal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

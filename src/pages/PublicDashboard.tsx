@@ -20,8 +20,10 @@ import {
 } from 'lucide-react';
 import { usePublicDashboard } from '../lib/usePublicDashboard';
 import type { AssignmentSlice } from '../lib/usePublicDashboard';
-import { useAnnouncements, fiveW1H } from '../lib/useAnnouncements';
+import { useAnnouncements } from '../lib/useAnnouncements';
 import type { Announcement } from '../lib/useAnnouncements';
+import { useAnnouncementPopup } from '../lib/useAnnouncementPopup';
+import AnnouncementModal from '../components/AnnouncementModal';
 import { resolveTaskStatus } from '../lib/recurrence';
 import { useAuth } from '../lib/useAuth';
 import { useSiteBranding } from '../lib/siteSettings';
@@ -35,48 +37,30 @@ type PubFilter = 'all' | 'pending' | 'completed' | 'overdue';
 /** Auto-advance interval (ms) for the announcement preview carousel. */
 const ANNOUNCE_CAROUSEL_MS = 4500;
 
-/** One labelled row of the 5W1H breakdown (rendered only when it has content). */
-function WRow({ label, value }: { label: string; value?: string | null }) {
-  if (!value || !value.trim()) return null;
-  return (
-    <p className="text-xs text-gray-600 mt-1 leading-snug break-words">
-      <span className="font-bold text-gray-700">{label}: </span>
-      <span className="whitespace-pre-wrap">{value}</span>
-    </p>
-  );
-}
-
-/** Full 5W1H detail rows for an announcement (WHO/WHEN/WHERE/WHY/HOW). */
-function FiveWOneHRows({ a }: { a: Announcement }) {
-  const d = fiveW1H(a);
-  return (
-    <>
-      <WRow label="Who" value={d.whois} />
-      <WRow label="When" value={d.when} />
-      <WRow label="Where" value={d.whereis} />
-      <WRow label="Why" value={d.why} />
-      <WRow label="How" value={d.how} />
-    </>
-  );
-}
-
 /**
  * Header announcements widget for the public board — a "News" button with an
- * auto-looping PREVIEW CAROUSEL on its left showing the latest notices
- * (tap/click any preview to open the full list). There is intentionally NO
- * red number/badge on the News button. Degrades gracefully: while loading,
- * empty, or if the announcements table doesn't exist yet, it shows an
- * appropriate message instead of breaking the page. Everything wraps/shrinks
- * so it never clips on small phone screens.
+ * auto-looping PREVIEW CAROUSEL on its left showing the latest notices.
+ *
+ * Clicking either the carousel preview or the News button opens the
+ * ANNOUNCEMENT / NOTIFICATION MODAL (`AnnouncementModal`) — the pop-up used to
+ * deliver an alert, a news update or the invitation to read a new announcement.
+ * It is rendered in the MIDDLE/CENTRE of the device screen and is SCROLLABLE
+ * (capped at 92dvh with a sticky header/footer and a scrolling body). There is
+ * intentionally NO red number badge on the News button. Degrades gracefully:
+ * while loading, empty, or if the announcements table doesn't exist yet, it
+ * shows an appropriate message instead of breaking the page. Everything
+ * wraps/shrinks so it never clips on small phone screens.
  */
 function AnnouncementPanel({
   announcements,
   loading,
+  userId = null,
 }: {
   announcements: Announcement[];
   loading: boolean;
+  /** Signed-in profile id (null = logged-out public visitor) for read markers. */
+  userId?: string | null;
 }) {
-  const [open, setOpen] = useState(false);
   const [idx, setIdx] = useState(0);
   // Hidden announcements (is_visible === false) never appear on the public
   // board — they stay in the Announcements page for admins only.
@@ -84,6 +68,22 @@ function AnnouncementPanel({
     () => announcements.filter((an) => an.is_visible !== false),
     [announcements],
   );
+
+  // Centred, scrollable pop-up + "already read" bookkeeping (localStorage).
+  const popup = useAnnouncementPopup(visibleAnnouncements, userId, { auto: true });
+
+  /**
+   * Was the modal opened by CLICKING News/the preview (true) or by the automatic
+   * "you have a new announcement" pop-up (false)? Stored as STATE so the header
+   * copy re-renders correctly: manual → browse every notice, auto → deliver only
+   * the unread ones.
+   */
+  const [manual, setManual] = useState(false);
+
+  // ── Modal content: manual = all visible notices (Prev/Next browsing),
+  //    auto = just the new/unread notices being delivered. ────────────────────
+  const modalItems = manual ? visibleAnnouncements : popup.pending;
+
   const items = visibleAnnouncements.slice(0, 8); // previews cycle through latest 8
 
   // Keep the carousel index valid when the list changes (realtime updates).
@@ -91,15 +91,23 @@ function AnnouncementPanel({
     setIdx((i) => (items.length === 0 ? 0 : i % items.length));
   }, [items.length]);
 
-  // Auto-loop to the next announcement every few seconds (only when >1 and
-  // the dropdown is closed so the visible preview stays in sync).
+  // Auto-loop to the next announcement every few seconds (paused while the
+  // modal is open so the preview behind it stays in sync).
   useEffect(() => {
-    if (open || items.length <= 1) return;
+    if (popup.open || items.length <= 1) return;
     const t = window.setInterval(() => setIdx((i) => (i + 1) % items.length), ANNOUNCE_CAROUSEL_MS);
     return () => window.clearInterval(t);
-  }, [open, items.length]);
+  }, [popup.open, items.length]);
 
   const current = items[idx % Math.max(items.length, 1)];
+
+  /** The notice the modal will lead with (newest unread, or newest overall). */
+  const lead = modalItems[0] ?? visibleAnnouncements[0];
+
+  function openAll() {
+    setManual(true);
+    popup.show(null);
+  }
 
   return (
     <div className="relative flex min-w-0 max-w-full items-center justify-end gap-1.5 sm:gap-2">
@@ -118,8 +126,8 @@ function AnnouncementPanel({
           )}
           <button
             type="button"
-            onClick={() => setOpen(true)}
-            title={current.title}
+            onClick={openAll}
+            title={`Read: ${current.title}`}
             aria-label={`Announcement preview: ${current.title}`}
             className="min-w-0 max-w-[140px] sm:max-w-[260px] md:max-w-[360px] lg:max-w-[520px] xl:max-w-[680px] px-1 text-left"
           >
@@ -140,66 +148,52 @@ function AnnouncementPanel({
         </div>
       )}
 
-      {/* ── News button — NO red number badge (bigger on wide screens) ── */}
+      {/* ── News button — opens the centred, scrollable modal ── */}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
+        onClick={openAll}
         title="Announcements"
         className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-2 text-sm lg:px-4 lg:py-2.5 lg:text-base font-bold transition-colors"
       >
         <Megaphone size={16} className="lg:w-[18px] lg:h-[18px]" /> News
+        {popup.pending.length > 0 && (
+          // Soft "new" chip (never a red alert badge) inviting staff to read.
+          <span className="rounded-full bg-sky-300 text-blue-950 px-1.5 py-0.5 text-[10px] font-extrabold leading-none">
+            {popup.pending.length} new
+          </span>
+        )}
       </button>
 
-      {open && (
-        <>
-          {/* Click-outside backdrop closes the dropdown. */}
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
-          <div className="absolute right-0 z-50 mt-2 w-96 max-w-[calc(100vw-1.5rem)] lg:w-[480px] max-h-[min(30rem,75vh)] overflow-y-auto rounded-xl bg-white text-gray-800 shadow-xl ring-1 ring-black/5">
-            <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
-              <h2 className="text-sm font-bold flex items-center gap-2 text-blue-900 min-w-0">
-                <Megaphone size={15} className="text-blue-600 flex-shrink-0" />
-                <span className="truncate">Announcements</span>
-              </h2>
-              <button
-                onClick={() => setOpen(false)}
-                title="Close"
-                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 flex-shrink-0"
-              >
-                <X size={15} />
-              </button>
-            </div>
-            {loading ? (
-              <p className="px-4 py-6 text-center text-sm text-gray-500">Loading…</p>
-            ) : visibleAnnouncements.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-gray-500">
-                No announcements yet.
-              </p>
-            ) : (
-              <ul className="divide-y divide-gray-100">
-                {visibleAnnouncements.map((an) => (
-                  <li key={an.id} className="px-4 py-3">
-                    <p className="text-sm font-semibold text-gray-800 leading-snug break-words">
-                      {an.title}
-                    </p>
-                    {an.body?.trim() && (
-                      <p className="text-xs text-gray-600 mt-1 whitespace-pre-line break-words">
-                        {an.body}
-                      </p>
-                    )}
-                    {/* 5W1H details (shown only when filled in) */}
-                    <FiveWOneHRows a={an} />
-                    <p className="text-[10px] text-gray-400 mt-1.5">
-                      {an.author_name ?? 'System'}
-                      {an.created_at ? ` · ${formatDueDate(an.created_at)}` : ''}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </>
+      {/* Graceful degradation while loading / when there is nothing yet — the
+          News button still works and the modal shows its own empty state. */}
+      {!loading && items.length === 0 && (
+        <span className="hidden sm:inline text-[11px] text-blue-200 italic">No announcements yet</span>
       )}
+
+      {/* ── ANNOUNCEMENT / NOTIFICATION MODAL — screen-centred & scrollable.
+          `heading` is intentionally left unset so the modal's headline IS the
+          announcement title, with the tone chip above it marking it as an
+          alert / news update / invitation to read. ───────────────────────── */}
+      <AnnouncementModal
+        open={popup.open}
+        onClose={() => {
+          setManual(false);
+          popup.hide();
+        }}
+        announcements={modalItems.length > 0 ? modalItems : visibleAnnouncements}
+        unreadIds={popup.unreadIds}
+        onView={(a) => popup.markSeen(a.id)}
+        subheading={
+          manual
+            ? `${visibleAnnouncements.length} office notice(s) · tap Next to browse`
+            : lead
+              ? `You have ${popup.pending.length} new notice(s) from the Provincial Office — please read.`
+              : 'No announcements posted yet.'
+        }
+        tone={manual ? 'news' : 'invite'}
+        dismissLabel="Close"
+        size="md"
+      />
     </div>
   );
 }
@@ -327,7 +321,11 @@ export default function PublicDashboard() {
                 updates automatically via Supabase Realtime + a 60s poll. */}
             {/* Announcements preview carousel + News panel — sits to the LEFT
                 of Sign Up / Sign In (logged off) or Return (logged-in session). */}
-            <AnnouncementPanel announcements={anns.announcements} loading={anns.loading} />
+            <AnnouncementPanel
+              announcements={anns.announcements}
+              loading={anns.loading}
+              userId={profile?.id ?? null}
+            />
             {/* Still signed in? Show a RETURN button instead of Sign Up / Sign
                 In — visiting this public board never logs anyone out, so the
                 button simply goes back to the logged-in session page. */}

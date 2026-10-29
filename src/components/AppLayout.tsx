@@ -18,8 +18,11 @@ import {
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
+import { useAnnouncements } from '../lib/useAnnouncements';
+import { useAnnouncementPopup } from '../lib/useAnnouncementPopup';
 import { useNotifications } from '../lib/notifications';
 import NotificationBell from './NotificationBell';
+import AnnouncementModal from './AnnouncementModal';
 import ProfileModal from './ProfileModal';
 import Avatar from './Avatar';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
@@ -40,6 +43,13 @@ export default function AppLayout() {
   // Free notification system: derive alerts from the user's own tasks.
   const t = useTasks(profile ?? null);
   const notif = useNotifications(profile ?? null, t.myTasks);
+
+  // ANNOUNCEMENT / NOTIFICATION MODAL — the centred, scrollable pop-up that
+  // delivers an alert, a news update or the invitation to read a NEW office
+  // announcement. It auto-opens once per visit when there are notices the
+  // signed-in staff member has never opened before (see useAnnouncementPopup).
+  const anns = useAnnouncements();
+  const popup = useAnnouncementPopup(anns.announcements, profile?.id ?? null);
 
   if (loading) {
     return (
@@ -239,6 +249,27 @@ export default function AppLayout() {
               </Link>
             </div>
             <div className="flex items-center gap-2">
+              {/* Announcements pop-up trigger — re-opens the centred, scrollable
+                  modal on demand (the auto pop-up only fires once per visit). */}
+              <button
+                type="button"
+                onClick={() => popup.show(null)}
+                disabled={popup.pending.length === 0 && !popup.open}
+                title={
+                  popup.pending.length > 0
+                    ? `Read ${popup.pending.length} new announcement(s)`
+                    : 'Open the announcements pop-up'
+                }
+                aria-label={`Announcements${popup.pending.length ? ` (${popup.pending.length} new)` : ''}`}
+                className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <Megaphone size={20} className={popup.pending.length > 0 ? 'text-blue-600' : undefined} />
+                {popup.pending.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center shadow">
+                    {popup.pending.length > 9 ? '9+' : popup.pending.length}
+                  </span>
+                )}
+              </button>
               <NotificationBell
                 notifications={notif.notifications}
                 unreadCount={notif.unreadCount}
@@ -279,6 +310,26 @@ export default function AppLayout() {
       </div>
 
       {profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} />}
+
+      {/* ── ANNOUNCEMENT / NOTIFICATION MODAL ────────────────────────────────
+          Screen-centred + scrollable pop-up that delivers an alert, a news
+          update or the invitation to read a new announcement. */}
+      <AnnouncementModal
+        open={popup.open}
+        onClose={popup.hide}
+        announcements={popup.pending.length > 0 ? popup.pending : anns.announcements.filter((an) => an.is_visible !== false)}
+        unreadIds={popup.unreadIds}
+        onView={(a) => popup.markSeen(a.id)}
+        heading="Office Announcements"
+        subheading={
+          popup.pending.length > 0
+            ? `${popup.pending.length} new notice(s) from the Provincial Office — please read.`
+            : 'All office notices are up to date.'
+        }
+        actionLabel="Open Announcements page"
+        onAction={() => navigate('/app/announcements')}
+        dismissLabel="Close"
+      />
     </div>
   );
 }
