@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Clock,
@@ -12,25 +12,64 @@ import {
   Search,
   FolderOpen,
   Folder,
+  ArrowLeft,
+  X,
 } from 'lucide-react';
 import { usePublicDashboard } from '../lib/usePublicDashboard';
+import type { AssignmentSlice } from '../lib/usePublicDashboard';
+import { resolveTaskStatus } from '../lib/recurrence';
+import { useAuth } from '../lib/useAuth';
 import { useSiteBranding } from '../lib/siteSettings';
 import { STATUS_META, FREQUENCY_OPTIONS, frequencyLabel } from '../lib/taskMeta';
 import { formatDueDate } from '../lib/useTasks';
 import type { Task, TaskFrequency } from '../lib/types';
 
+/** Status-card filter used by the clickable dashboard cards. */
+type PubFilter = 'all' | 'pending' | 'completed' | 'overdue';
+
 /**
  * Public Viewing Dashboard — NO login required.
  *  • Shows REAL data and updates automatically (Supabase Realtime + 60s poll).
+ *  • Counts are PER ASSIGNMENT: a task assigned to N users counts as N total
+ *    tasks and lands in each assignee's own status bucket (Complete only once
+ *    that user certified; Overdue while their deadline passed uncertified).
+ *  • The four summary cards are CLICKABLE — they filter the assignment list
+ *    shown directly BELOW the cards (no scrolling needed); click the active
+ *    card again (or "Clear filter") to view all assignments again.
  *  • Priority order: Overdue → due within 1 day → within 3 days → everything else.
  *  • Only Complete / Pending / Overdue statuses are used everywhere.
+ *  • Signed-in users who navigated here get a "Return" button instead of the
+ *    Sign Up / Sign In buttons so they can go back to their session easily.
  */
 export default function PublicDashboard() {
   const { branding } = useSiteBranding();
   const pub = usePublicDashboard();
+  const { profile, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<PubFilter>('all');
+
+  /** Clicking the already-active card clears the filter (shows all again). */
+  function handleCardSelect(f: PubFilter) {
+    setFilter((prev) => (prev === f ? 'all' : f));
+  }
+
+  /** All (task, assignee) slices matching the active status card + search. */
+  const filteredSlices = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return pub.slices.filter((s) => {
+      if (filter !== 'all' && pub.sliceStatusOf(s) !== filter) return false;
+      if (!needle) return true;
+      return (
+        s.task.title.toLowerCase().includes(needle) ||
+        (s.task.category?.name ?? '').toLowerCase().includes(needle)
+      );
+    });
+  }, [pub.slices, pub.sliceStatusOf, filter, q]);
 
   const buckets = useMemo(() => {
+    // De-duplicate tasks across slices for the priority board below.
+    const seen = new Set<string>();
     const matches = (t: Task) =>
       !q.trim() ||
       t.title.toLowerCase().includes(q.trim().toLowerCase()) ||
@@ -48,12 +87,19 @@ export default function PublicDashboard() {
       return d !== null && d > 1 && d <= 3;
     });
     const rest = pub.prioritized.filter(
-      (t) => matches(t) && !overdue.includes(t) && !soon.includes(t) && !mid.includes(t),
+      (t) =>
+        matches(t) &&
+        !seen.has(t.id) &&
+        !overdue.includes(t) &&
+        !soon.includes(t) &&
+        !mid.includes(t),
     );
+    [...overdue, ...soon, ...mid, ...rest].forEach((t) => seen.add(t.id));
     return { overdue, soon, mid, rest };
   }, [pub.prioritized, pub.statusOf, q]);
 
   const completedCount = pub.stats.completed;
+  const filtersActive = filter !== 'all';
 
   return (
     // Sticky-footer layout: flex column, main grows, footer sits at the bottom
@@ -91,18 +137,33 @@ export default function PublicDashboard() {
           <div className="flex items-center gap-2">
             {/* NOTE: the manual Refresh button was removed — the board already
                 updates automatically via Supabase Realtime + a 60s poll. */}
-            <Link
-              to="/register"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-green-500 hover:bg-green-400 text-blue-950 px-3 py-2 text-sm font-bold"
-            >
-              <UserPlus size={14} /> Sign Up
-            </Link>
-            <Link
-              to="/login"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-blue-950 px-3 py-2 text-sm font-bold"
-            >
-              <LogIn size={14} /> Sign In
-            </Link>
+            {/* Still signed in? Show a RETURN button instead of Sign Up / Sign
+                In — visiting this public board never logs anyone out, so the
+                button simply goes back to the logged-in session page. */}
+            {!authLoading && profile ? (
+              <button
+                onClick={() => navigate('/app/dashboard')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-400 hover:bg-sky-300 text-blue-950 px-3 py-2 text-sm font-bold"
+                title={`Return to your session as ${profile.full_name ?? 'Staff Member'}`}
+              >
+                <ArrowLeft size={14} /> Return
+              </button>
+            ) : (
+              <>
+                <Link
+                  to="/register"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-green-500 hover:bg-green-400 text-blue-950 px-3 py-2 text-sm font-bold"
+                >
+                  <UserPlus size={14} /> Sign Up
+                </Link>
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-blue-950 px-3 py-2 text-sm font-bold"
+                >
+                  <LogIn size={14} /> Sign In
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -115,13 +176,93 @@ export default function PublicDashboard() {
           </div>
         )}
 
-        {/* Summary strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <SummaryCard label="Total Tasks" value={pub.stats.total} tone="bg-slate-800" icon={<Users size={18} />} />
-          <SummaryCard label="Overdue" value={pub.stats.overdue} tone="bg-red-600" icon={<AlertTriangle size={18} />} />
-          <SummaryCard label="Pending" value={pub.stats.pending} tone="bg-amber-500" icon={<Clock size={18} />} />
-          <SummaryCard label="Complete" value={completedCount} tone="bg-green-600" icon={<CheckCircle2 size={18} />} />
+        {/* Summary strip — every card is a clickable status FILTER. */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
+          <SummaryCard
+            label="Total Tasks"
+            value={pub.stats.total}
+            tone="bg-slate-800"
+            icon={<Users size={18} />}
+            active={filter === 'all'}
+            inactiveHint="Click to show all assignments"
+            onClick={() => handleCardSelect('all')}
+          />
+          <SummaryCard
+            label="Overdue"
+            value={pub.stats.overdue}
+            tone="bg-red-600"
+            icon={<AlertTriangle size={18} />}
+            active={filter === 'overdue'}
+            onClick={() => handleCardSelect('overdue')}
+          />
+          <SummaryCard
+            label="Pending"
+            value={pub.stats.pending}
+            tone="bg-amber-500"
+            icon={<Clock size={18} />}
+            active={filter === 'pending'}
+            onClick={() => handleCardSelect('pending')}
+          />
+          <SummaryCard
+            label="Complete"
+            value={completedCount}
+            tone="bg-green-600"
+            icon={<CheckCircle2 size={18} />}
+            active={filter === 'completed'}
+            onClick={() => handleCardSelect('completed')}
+          />
         </div>
+
+        {/* Active-filter bar + CLEAR — filters the list right below the cards. */}
+        <div className="flex flex-wrap items-center gap-2 mb-6 min-h-[1.75rem]">
+          <span className="text-[11px] text-gray-500">
+            Counts are per assigned user — one task shared with 3 people counts as 3.
+          </span>
+          {filtersActive && (
+            <>
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
+                Filter: {filter}
+                <button onClick={() => setFilter('all')} title="Remove status filter">
+                  <X size={11} />
+                </button>
+              </span>
+              <button
+                onClick={() => setFilter('all')}
+                className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Clear filter — view all
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* ═══ FILTERED ASSIGNMENTS — directly under the cards, no scrolling ═══ */}
+        <section className="mb-8">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700 border-l-4 border-blue-500 pl-3 mb-3">
+            {filter === 'all'
+              ? `All task assignments (${filteredSlices.length})`
+              : `${STATUS_META[filter].label} assignments (${filteredSlices.length})`}
+          </h2>
+          {filteredSlices.length === 0 ? (
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 py-10 text-center">
+              <p className="text-gray-500 font-medium text-sm">
+                No {filter === 'all' ? '' : `${STATUS_META[filter].label.toLowerCase()} `}
+                assignments match this view.
+              </p>
+              {filtersActive && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Click the active card again or “Clear filter” to view all assignments.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredSlices.map((s) => (
+                <AssignmentRow key={`${s.task.id}-${s.user_id || 'unassigned'}`} slice={s} />
+              ))}
+            </div>
+          )}
+        </section>
 
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <p className="text-xs text-gray-500 flex items-center gap-1.5">
@@ -154,6 +295,7 @@ export default function PublicDashboard() {
               tasks={buckets.overdue}
               statusOf={pub.statusOf}
             />
+
             <Bucket
               title="Due within 1 day"
               accent="border-orange-500"
@@ -217,19 +359,119 @@ function SummaryCard({
   value,
   tone,
   icon,
+  active = false,
+  inactiveHint = 'Click to filter',
+  onClick,
 }: {
   label: string;
   value: number;
   tone: string;
   icon: ReactNode;
+  /** True when this card is the currently active status filter. */
+  active?: boolean;
+  inactiveHint?: string;
+  onClick?: () => void;
 }) {
   return (
-    <div className={`${tone} text-white rounded-xl p-4 flex items-center justify-between shadow`}>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={active ? `Showing only ${label} — click again to view all` : `${inactiveHint} (${label})`}
+      className={`${tone} text-white rounded-xl p-4 flex items-center justify-between shadow transition-all text-left w-full
+        hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-white/70
+        ${active ? 'ring-4 ring-white/60 scale-[1.02]' : ''}`}
+    >
       <div>
         <p className="text-white/80 text-xs font-medium">{label}</p>
         <p className="text-3xl font-bold mt-1">{value}</p>
+        <p className="text-[10px] mt-1 font-semibold text-white/75">
+          {active ? '✓ Filter active · click again to clear' : inactiveHint}
+        </p>
       </div>
       <div className="bg-white/15 rounded-full p-2.5">{icon}</div>
+    </button>
+  );
+}
+
+/** Effective status of one assignment slice (mirrors usePublicDashboard). */
+function sliceStatus(s: AssignmentSlice): 'completed' | 'pending' | 'overdue' {
+  if (s.completed || s.task.status === 'completed') return 'completed';
+  return resolveTaskStatus(s.task);
+}
+
+/**
+ * One (task, assignee) slice rendered under the summary cards — the unit of
+ * the public per-assignment counting. Shows WHO owns the slice and whether
+ * THEIR part is Complete / Pending / Overdue.
+ */
+function AssignmentRow({ slice }: { slice: AssignmentSlice }) {
+  const st = sliceStatus(slice);
+  const meta = STATUS_META[st];
+  const t = slice.task;
+  const profile = (t.assignee_profiles ?? []).find((p) => p.id === slice.user_id);
+  const name = profile?.full_name ?? (slice.user_id ? 'Staff' : 'Unassigned');
+  const others = (t.assignee_profiles ?? []).filter((p) => p.id !== slice.user_id);
+
+  return (
+    <div
+      className={`bg-white rounded-xl border shadow-sm p-4 ${
+        st === 'overdue' ? 'border-red-200' : st === 'completed' ? 'border-green-200' : 'border-gray-100'
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+        <span
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.cls}`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+          {meta.label}
+        </span>
+        {t.category && (
+          <span
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            style={{
+              color: t.category.color ?? '#64748b',
+              backgroundColor: `${t.category.color ?? '#64748b'}18`,
+            }}
+          >
+            {t.category.name}
+          </span>
+        )}
+        {t.frequency !== 'one-time' && (
+          <span className="rounded-full bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-medium text-indigo-700 capitalize">
+            {frequencyLabel(t.frequency)}
+          </span>
+        )}
+      </div>
+      <h3
+        className={`font-semibold text-gray-800 text-sm leading-snug ${
+          st === 'completed' ? 'line-through text-gray-400' : ''
+        }`}
+      >
+        {t.title}
+      </h3>
+      <p className="text-xs text-gray-500 mt-1">Due: {formatDueDate(t.due_date)}</p>
+      <p className="text-xs text-gray-700 mt-2 flex items-center gap-1 flex-wrap">
+        <Users size={12} className="text-gray-400" />
+        <span className="font-semibold">{name}</span>
+        <span className="text-gray-400">· their part:</span>
+        <span
+          className={
+            st === 'completed'
+              ? 'text-green-700 font-medium'
+              : st === 'overdue'
+                ? 'text-red-600 font-medium'
+                : 'text-amber-700 font-medium'
+          }
+        >
+          {st === 'completed' ? 'Done ✓' : st === 'overdue' ? 'Overdue' : 'Not yet done'}
+        </span>
+        {others.length > 0 && (
+          <span className="text-[10px] text-gray-400" title={`Also assigned: ${others.map((p) => p.full_name ?? 'Staff').join(', ')}`}>
+            (+{others.length} other{others.length === 1 ? '' : 's'})
+          </span>
+        )}
+      </p>
     </div>
   );
 }

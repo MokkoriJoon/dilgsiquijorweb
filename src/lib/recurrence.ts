@@ -143,7 +143,17 @@ export function resolveTaskStatus(task: any, now: Date = new Date()): 'completed
   if (task.status === 'completed') return 'completed';
   const today = startOfDay(now);
 
+  // Any stored status other than 'completed'/'pending' (legacy 'in-progress',
+  // null, stale values) is treated as PENDING so it always lands on the
+  // Pending card instead of slipping through every filter.
+  const pendingish = (): 'completed' | 'pending' | 'overdue' => {
+    if (!task.due_date) return 'pending';
+    const due = startOfDaySafe(parseISO(String(task.due_date).slice(0, 10)));
+    return due < today ? 'overdue' : 'pending';
+  };
+
   if (!isRecurring(task.frequency)) {
+    if (task.status !== 'pending') return pendingish();
     if (!task.due_date) return 'pending';
     const due = startOfDaySafe(parseISO(String(task.due_date).slice(0, 10)));
     return due < today ? 'overdue' : 'pending';
