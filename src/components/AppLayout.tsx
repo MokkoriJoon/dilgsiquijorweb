@@ -11,6 +11,7 @@ import {
   Bookmark,
   Settings2,
   Tags,
+  Globe,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
@@ -147,8 +148,20 @@ export default function AppLayout() {
         ))}
       </nav>
 
-      {/* Sign out */}
-      <div className="px-3 py-4 border-t border-slate-700/60">
+      {/* Bottom of the logged-in user menu */}
+      <div className="px-3 py-4 border-t border-slate-700/60 space-y-1">
+        {/* Public View Dashboard — logged-in users can open the live public
+            board WITHOUT signing out; the page shows a "Back to my account"
+            button that returns them here. */}
+        <Link
+          to="/?view=public"
+          onClick={() => setMobileOpen(false)}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-sky-300 hover:bg-slate-700/60 hover:text-sky-200 transition-colors"
+          title="View the Public Dashboard (you stay signed in)"
+        >
+          <Globe size={18} />
+          Public View Dashboard
+        </Link>
         <button
           onClick={handleSignOut}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-orange-300 hover:bg-slate-700/60 hover:text-orange-200 transition-colors"

@@ -154,29 +154,37 @@ export default function AppDashboard() {
         <EmptyState filtered={filtersActive} />
       ) : (
         <div className="space-y-3">
-          {list.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              status={t.statusOf(task)}
-              canManage={isAdminOrAbove}
-              onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
-              onReopen={t.reopenTask}
-              onEdit={(tk) => {
-                setEditing(tk);
-                setModalOpen(true);
-              }}
-              onDelete={
-                isAdminOrAbove
-                  ? async (tk) => {
-                      if (window.confirm(`Delete “${tk.title}”? This cannot be undone.`)) {
-                        await t.deleteTask(tk.id);
+          {list.map((task) => {
+            // Complete button → assignees only; Super Admins may complete ANY
+            // task. Users not assigned get NO Complete button here.
+            const assignedToMe =
+              task.assigned_to === profile.id || (task.assignees ?? []).includes(profile.id);
+            return (
+              <TaskCard
+                key={task.id}
+                task={task}
+                status={t.statusOf(task)}
+                canManage={isAdminOrAbove && task.assigned_by === profile.id}
+                canComplete={profile.role === 'SUPER_ADMIN' ? true : assignedToMe}
+                myDone={!task.is_personal && t.myAssignmentDone(task)}
+                onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
+                onReopen={t.reopenTask}
+                onEdit={(tk) => {
+                  setEditing(tk);
+                  setModalOpen(true);
+                }}
+                onDelete={
+                  isAdminOrAbove
+                    ? async (tk) => {
+                        if (window.confirm(`Delete “${tk.title}”? This cannot be undone.`)) {
+                          await t.deleteTask(tk.id);
+                        }
                       }
-                    }
-                  : undefined
-              }
-            />
-          ))}
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
       )}
 

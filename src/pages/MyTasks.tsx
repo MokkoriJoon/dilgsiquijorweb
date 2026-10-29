@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router-dom';
 import {
   RefreshCw,
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   Users,
   Inbox,
   ShieldAlert,
+  Globe,
 } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
@@ -147,17 +148,26 @@ export default function MyTasks() {
 
   /** Render one task row with the correct permissions for its type. */
   function renderCard(task: Task, personal: boolean) {
-    // Personal tasks are always fully manageable by their owner; assigned
-    // organization tasks can only be edited/deleted by Admins & Super Admins.
-    const canManage = personal || isAdminOrAbove;
+    // Personal tasks are always fully manageable by their owner. For ASSIGNED
+    // organization tasks even Admins may only edit/delete what THEY created —
+    // a task merely assigned to them is read-only (complete only). Standard
+    // users never get edit/delete on assigned tasks at all.
+    const canManage = personal || (isAdminOrAbove && task.assigned_by === profile.id);
+    // Complete button: assignees only — except Super Admins, who may complete
+    // ANY task even when not assigned. Unassigned Admins/Standard see nothing.
+    const assignedToMe =
+      task.assigned_to === profile.id || (task.assignees ?? []).includes(profile.id);
+    const canComplete = profile.role === 'SUPER_ADMIN' ? true : assignedToMe;
     return (
       <TaskCard
         key={task.id}
         task={task}
         status={t.statusOf(task)}
         canManage={canManage}
+        canComplete={canComplete}
+        myDone={!personal && t.myAssignmentDone(task)}
         onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
-        onReopen={t.reopenTask}
+        onReopen={canManage ? t.reopenTask : undefined}
         onEdit={
           canManage
             ? (tk) => {
@@ -201,6 +211,15 @@ export default function MyTasks() {
           >
             <RefreshCw size={14} /> Refresh
           </button>
+          {/* Public Viewing Dashboard — opens the live org-wide board while the
+              user stays logged in (the page shows a "Back to my account" button). */}
+          <Link
+            to="/?view=public"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 text-sm font-medium"
+            title="Open the Public Viewing Dashboard (you stay signed in)"
+          >
+            <Globe size={14} /> Public View Dashboard
+          </Link>
           {/* Personal tasks: allowed for EVERY role (private, not system-wide).
               NOTE: the top "+Add New Personal Task" button was removed — personal
               tasks are added from the Personal Tasks section below. */}

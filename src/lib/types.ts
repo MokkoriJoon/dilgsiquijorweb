@@ -89,6 +89,18 @@ export interface Bookmark {
 export interface TaskAssignment {
   task_id: string;
   user_id: string;
+  /** Per-user completion: each assignee must certify their own share. */
+  completed?: boolean;
+  completed_at?: string | null;
+  completion_note?: string | null;
+  completed_by?: string | null;
+}
+
+/** One assignee's slice of a task (used for dashboard counting). */
+export interface AssigneeSlice {
+  user_id: string;
+  completed: boolean;
+  overdue: boolean;
 }
 
 export interface Task {
@@ -125,6 +137,8 @@ export interface Task {
   /** All users assigned to this task (multiple users per task). */
   assignees?: string[];
   assignee_profiles?: Profile[];
+  /** Per-user completion state of every assignment row (dashboard counting). */
+  assignments?: TaskAssignment[];
   links?: TaskLink[];
   category?: TaskCategory | null;
 }
