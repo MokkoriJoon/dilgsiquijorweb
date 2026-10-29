@@ -31,6 +31,85 @@ import type { Task, TaskFrequency } from '../lib/types';
 type PubFilter = 'all' | 'pending' | 'completed' | 'overdue';
 
 /**
+ * Header announcements widget for the public board — a bell-style button that
+ * opens a dropdown listing the latest ADMIN notices (read-only). Degrades
+ * gracefully: while loading, empty, or if the announcements table doesn't
+ * exist yet, it shows an appropriate message instead of breaking the page.
+ */
+function AnnouncementPanel({
+  announcements,
+  loading,
+}: {
+  announcements: Announcement[];
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const unread = announcements.length;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="Announcements"
+        className="relative inline-flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-2 text-sm font-bold transition-colors"
+      >
+        <Megaphone size={14} /> News
+        {unread > 0 && (
+          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          {/* Click-outside backdrop closes the dropdown. */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
+          <div className="absolute right-0 z-50 mt-2 w-80 max-h-96 overflow-y-auto rounded-xl bg-white text-gray-800 shadow-xl ring-1 ring-black/5">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
+              <h2 className="text-sm font-bold flex items-center gap-2 text-blue-900">
+                <Megaphone size={15} className="text-blue-600" /> Announcements
+              </h2>
+              <button
+                onClick={() => setOpen(false)}
+                title="Close"
+                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            {loading ? (
+              <p className="px-4 py-6 text-center text-sm text-gray-500">Loading…</p>
+            ) : announcements.length === 0 ? (
+              <p className="px-4 py-6 text-center text-sm text-gray-500">
+                No announcements yet.
+              </p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {announcements.map((an) => (
+                  <li key={an.id} className="px-4 py-3">
+                    <p className="text-sm font-semibold text-gray-800 leading-snug">{an.title}</p>
+                    <p className="text-xs text-gray-600 mt-1 whitespace-pre-line break-words">
+                      {an.body}
+                    </p>
+                    <p className="text-[10px] text-gray-400 mt-1.5">
+                      {an.author_name ?? 'System'}
+                      {an.created_at ? ` · ${formatDueDate(an.created_at)}` : ''}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * Public Viewing Dashboard — NO login required.
  *  • Shows REAL data and updates automatically (Supabase Realtime + 60s poll).
  *  • Counts are PER ASSIGNMENT: a task assigned to N users counts as N total
@@ -110,6 +189,10 @@ export default function PublicDashboard() {
 
   const completedCount = pub.stats.completed;
   const filtersActive = filter !== 'all';
+
+  // NOTE: an accidentally duplicated "Filtered Assignments" section was
+  // removed from the markup below — rendering the same <section> twice made
+  // React throw during render ("Something went wrong").
 
   return (
     // Sticky-footer layout: flex column, main grows, footer sits at the bottom
@@ -249,60 +332,6 @@ export default function PublicDashboard() {
             </>
           )}
         </div>
-
-        {/* ═══ FILTERED ASSIGNMENTS — hidden by default; "View Tasks" toggles ═══ */}
-        <section className="mb-8">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700 border-l-4 border-blue-500 pl-3">
-              {filter === 'all'
-                ? `All task assignments (${filteredSlices.length})`
-                : `${STATUS_META[filter].label} assignments (${filteredSlices.length})`}
-            </h2>
-            {/* View Tasks button BESIDE the heading — shows/hides the list. */}
-            <button
-              type="button"
-              onClick={() => setTasksVisible((v) => !v)}
-              aria-expanded={tasksVisible}
-              title={tasksVisible ? 'Hide the task assignments list' : 'Show the task assignments list'}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold shadow-sm transition-colors"
-            >
-              {tasksVisible ? (
-                <>
-                  <X size={13} /> Hide Tasks
-                </>
-              ) : (
-                <>
-                  <FolderOpen size={13} /> View Tasks
-                </>
-              )}
-            </button>
-          </div>
-          {!tasksVisible ? (
-            <div className="bg-white rounded-xl border border-dashed border-gray-300 py-6 text-center">
-              <p className="text-gray-500 font-medium text-sm">
-                Task assignments are hidden. Click “View Tasks” to show them.
-              </p>
-            </div>
-          ) : filteredSlices.length === 0 ? (
-            <div className="bg-white rounded-xl border border-dashed border-gray-300 py-10 text-center">
-              <p className="text-gray-500 font-medium text-sm">
-                No {filter === 'all' ? '' : `${STATUS_META[filter].label.toLowerCase()} `}
-                assignments match this view.
-              </p>
-              {filtersActive && (
-                <p className="text-xs text-gray-400 mt-1">
-                  Click the active card again or “Clear filter” to view all assignments.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {filteredSlices.map((s) => (
-                <AssignmentRow key={`${s.task.id}-${s.user_id || 'unassigned'}`} slice={s} />
-              ))}
-            </div>
-          )}
-        </section>
 
         {/* ═══ FILTERED ASSIGNMENTS — hidden by default; "View Tasks" toggles ═══ */}
         <section className="mb-8">
