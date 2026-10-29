@@ -50,23 +50,38 @@ export default function AppDashboard() {
     setFreqs((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
   }
 
+  /** Assignees of one task who have not certified while the task is past due. */
+  function overdueCountOf(task: Task): number {
+    if (t.statusOf(task) !== 'overdue') return 0;
+    const rows =
+      task.assignments && task.assignments.length > 0
+        ? task.assignments
+        : (task.assignees ?? [task.assigned_to]).map((u) => ({
+            task_id: task.id,
+            user_id: u ?? '',
+            completed: false,
+          }));
+    return rows.filter((a) => a.user_id && !a.completed).length;
+  }
+
   const list = useMemo(() => {
+    // MY status — once I certify my slice the task counts as COMPLETE for me.
     let items = t.myTasks;
-    if (filter !== 'all') items = items.filter((x) => t.statusOf(x) === filter);
+    if (filter !== 'all') items = items.filter((x) => t.myStatusOf(x) === filter);
     if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
     return items;
-  }, [t.myTasks, t.statusOf, filter, freqs]);
+  }, [t.myTasks, t.myStatusOf, filter, freqs]);
 
   /** Per-frequency counts within the currently selected status card. */
   const freqCounts = useMemo(() => {
     const base =
-      filter === 'all' ? t.myTasks : t.myTasks.filter((x) => t.statusOf(x) === filter);
+      filter === 'all' ? t.myTasks : t.myTasks.filter((x) => t.myStatusOf(x) === filter);
     const map: Partial<Record<TaskFrequency, number>> = {};
     base.forEach((x) => {
       map[x.frequency] = (map[x.frequency] ?? 0) + 1;
     });
     return map;
-  }, [t.myTasks, t.statusOf, filter]);
+  }, [t.myTasks, t.myStatusOf, filter]);
 
   const filtersActive = filter !== 'all' || freqs.length > 0;
 
@@ -163,10 +178,11 @@ export default function AppDashboard() {
               <TaskCard
                 key={task.id}
                 task={task}
-                status={t.statusOf(task)}
+                status={t.myStatusOf(task)}
                 canManage={isAdminOrAbove && task.assigned_by === profile.id}
                 canComplete={profile.role === 'SUPER_ADMIN' ? true : assignedToMe}
                 myDone={!task.is_personal && t.myAssignmentDone(task)}
+                overdueCount={overdueCountOf(task)}
                 onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
                 onReopen={t.reopenTask}
                 onEdit={(tk) => {

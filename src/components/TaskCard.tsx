@@ -22,6 +22,7 @@ export default function TaskCard({
   canManage,
   canComplete = true,
   myDone = false,
+  overdueCount = 0,
   onComplete,
   onReopen,
   onEdit,
@@ -35,7 +36,9 @@ export default function TaskCard({
   canComplete?: boolean;
   /** The current user already certified THEIR OWN assignment (multi-assignee). */
   myDone?: boolean;
-  onComplete: (id: string, note: string) => Promise<{ error?: string }>;
+  /** How many of THIS task's assignees are still outstanding past their due date. */
+  overdueCount?: number;
+  onComplete: (id: string, note: string) => Promise<{ error?: string }> | { error?: string };
   onReopen?: (id: string) => Promise<{ error?: string }> | void;
   onEdit?: (task: Task) => void;
   onDelete?: (task: Task) => void;
@@ -53,7 +56,7 @@ export default function TaskCard({
     }
     setBusy(true);
     setErr('');
-    const res = await onComplete(task.id, note);
+    const res = await Promise.resolve(onComplete(task.id, note));
     setBusy(false);
     if (res.error) setErr(res.error);
     else {
@@ -90,7 +93,7 @@ export default function TaskCard({
             <DueBadge task={task} status={status} />
             <NextRunHint task={task} />
             <span className="text-gray-400">
-              Assigned: <AssigneeList task={task} />
+              Assigned: <AssigneeList task={task} overdueCount={overdueCount} />
             </span>
           </div>
 

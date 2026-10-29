@@ -276,19 +276,24 @@ export function useTasks(profile: Profile | null) {
   );
 
   /** Count a list of tasks ONCE EACH (personal view — my slice only). */
-  function countTasks(list: Task[]) {
+  function countTasks(
+    list: Task[],
+    statusFn: (t: Task) => 'completed' | 'pending' | 'overdue' = statusOf,
+  ) {
     return {
       total: list.length,
-      completed: list.filter((t) => statusOf(t) === 'completed').length,
-      pending: list.filter((t) => statusOf(t) === 'pending').length,
-      overdue: list.filter((t) => statusOf(t) === 'overdue').length,
+      completed: list.filter((t) => statusFn(t) === 'completed').length,
+      pending: list.filter((t) => statusFn(t) === 'pending').length,
+      overdue: list.filter((t) => statusFn(t) === 'overdue').length,
     };
   }
 
   const stats = useMemo(() => {
     return {
-      // MY dashboard / MY tasks → count only my own slice (1 per task).
-      mine: countTasks(assignedTasks),
+      // MY dashboard / MY tasks → count only my own slice (1 per task) and use
+      // MY OWN status: once I certify my part the task is COMPLETED for me,
+      // even if other assignees have not finished theirs.
+      mine: countTasks(assignedTasks, myStatusOf),
       // Organization-wide (Task Management cards) → per-assignment counts.
       all: countPerAssignee(orgTasks),
       personal: countTasks(personalTasks),
@@ -462,6 +467,35 @@ export function useTasks(profile: Profile | null) {
     return t.assigned_to === userId || (t.assignees ?? []).includes(userId);
   }
 
+  /** Assignments (rows or ids) belonging to the current user. */
+  function mySlices(t: Task): TaskAssignment[] {
+    const me = profile?.id;
+    if (!me) return [];
+    const rows: TaskAssignment[] =
+      t.assignments && t.assignments.length > 0
+        ? t.assignments
+        : (t.assignees ?? (t.assigned_to ? [t.assigned_to] : [])).map((u) => ({
+            task_id: t.id,
+            user_id: u,
+            completed: false,
+          }));
+    return rows.filter((a) => a.user_id === me);
+  }
+
+  /**
+   * Status of a task FROM MY OWN PERSPECTIVE (see useTasks() below). Declared
+   * as a plain function so it is hoisted and can be used by `stats` while the
+   * hook body still runs top-to-bottom.
+   */
+  function myStatusOf(t: Task): 'completed' | 'pending' | 'overdue' {
+    if (t.status === 'completed') return 'completed';
+    const mine = mySlices(t);
+    if (mine.length > 0 && mine.every((a) => !!a.completed)) return 'completed';
+    // Shared resolver also normalizes legacy statuses ('in-progress', stale
+    // values…) to pending/overdue so nothing slips through the cards.
+    return resolveTaskStatus(t);
+  }
+
   /** Whether the CURRENT USER already certified their own assignment. */
   const myAssignmentDone = useCallback(
     (t: Task): boolean => {
@@ -473,6 +507,38 @@ export function useTasks(profile: Profile | null) {
       return !!mine?.completed;
     },
     [profile?.id],
+  );
+
+  /**
+   * Members of an org-wide task list who have NOT certified their slice and
+   * whose task slice is past due. Powers the red "+N" chip on every assignee
+   * list so overdue people are visible without opening the task.
+   */
+  const overdueMembersOf = useCallback(
+    (list: Task[]): Profile[] => {
+      const out: Profile[] = [];
+      const seen = new Set<string>();
+      for (const t of list) {
+        if (resolveTaskStatus(t) !== 'overdue') continue;
+        const rows: TaskAssignment[] =
+          t.assignments && t.assignments.length > 0
+            ? t.assignments
+            : (t.assignees ?? (t.assigned_to ? [t.assigned_to] : [])).map((u) => ({
+                task_id: t.id,
+                user_id: u,
+                completed: false,
+              }));
+        for (const a of rows) {
+          if (a.completed || !a.user_id || seen.has(a.user_id)) continue;
+          const p = profileById.get(a.user_id);
+          if (!p) continue;
+          seen.add(a.user_id);
+          out.push(p);
+        }
+      }
+      return out;
+    },
+    [profileById],
   );
 
   /**
@@ -702,6 +768,8 @@ export function useTasks(profile: Profile | null) {
     error,
     stats,
     statusOf,
+    myStatusOf,
+    overdueMembersOf,
     countPerAssignee,
     myAssignmentDone,
     refetch: fetchData,

@@ -208,6 +208,20 @@ export default function TaskManagement() {
             // task even when not assigned. Unassigned users get NO button.
             const assignedToMe =
               task.assigned_to === profile.id || (task.assignees ?? []).includes(profile.id);
+            // Outstanding (uncertified) assignees when the task is past due →
+            // shown as a clickable red "OVERDUE +N" chip beside the names.
+            const overdueCount = (() => {
+              if (t.statusOf(task) !== 'overdue') return 0;
+              const rows =
+                task.assignments && task.assignments.length > 0
+                  ? task.assignments
+                  : (task.assignees ?? [task.assigned_to]).map((u) => ({
+                      task_id: task.id,
+                      user_id: u ?? '',
+                      completed: false,
+                    }));
+              return rows.filter((a) => a.user_id && !a.completed).length;
+            })();
             return (
               <TaskCard
                 key={task.id}
@@ -216,6 +230,7 @@ export default function TaskManagement() {
                 canManage={canManage}
                 canComplete={profile?.role === 'SUPER_ADMIN' ? true : assignedToMe}
                 myDone={t.myAssignmentDone(task)}
+                overdueCount={overdueCount}
                 onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
                 onReopen={t.reopenTask}
                 onEdit={

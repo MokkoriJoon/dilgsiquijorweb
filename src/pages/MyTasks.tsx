@@ -111,8 +111,8 @@ export default function MyTasks() {
   }
 
   const assignedList = useMemo(
-    () => applyFilters(t.assignedTasks, filter, freqs, t.statusOf),
-    [t.assignedTasks, t.statusOf, filter, freqs],
+    () => applyFilters(t.assignedTasks, filter, freqs, t.myStatusOf),
+    [t.assignedTasks, t.myStatusOf, filter, freqs],
   );
   const personalList = useMemo(
     () => applyFilters(t.personalTasks, pFilter, pFreqs, t.statusOf),
@@ -120,8 +120,8 @@ export default function MyTasks() {
   );
 
   const freqCounts = useMemo(
-    () => freqCountMap(t.assignedTasks, filter, t.statusOf),
-    [t.assignedTasks, t.statusOf, filter],
+    () => freqCountMap(t.assignedTasks, filter, t.myStatusOf),
+    [t.assignedTasks, t.myStatusOf, filter],
   );
   const personalFreqCounts = useMemo(
     () => freqCountMap(t.personalTasks, pFilter, t.statusOf),
@@ -158,14 +158,32 @@ export default function MyTasks() {
     const assignedToMe =
       task.assigned_to === profile.id || (task.assignees ?? []).includes(profile.id);
     const canComplete = profile.role === 'SUPER_ADMIN' ? true : assignedToMe;
+    // MY status: a shared task where I already certified my slice shows as
+    // COMPLETED for me (never Pending/Overdue) even if others still owe theirs.
+    const myStatus = personal ? t.statusOf(task) : t.myStatusOf(task);
+    // Outstanding assignees past due → the red "OVERDUE +N" chip beside the
+    // names, so you can see who is late without opening the task.
+    const overdueCount = (() => {
+      if (t.statusOf(task) !== 'overdue') return 0;
+      const rows =
+        task.assignments && task.assignments.length > 0
+          ? task.assignments
+          : (task.assignees ?? [task.assigned_to]).map((u) => ({
+              task_id: task.id,
+              user_id: u ?? '',
+              completed: false,
+            }));
+      return rows.filter((a) => a.user_id && !a.completed).length;
+    })();
     return (
       <TaskCard
         key={task.id}
         task={task}
-        status={t.statusOf(task)}
+        status={myStatus}
         canManage={canManage}
         canComplete={canComplete}
         myDone={!personal && t.myAssignmentDone(task)}
+        overdueCount={overdueCount}
         onComplete={async (id, note) => t.completeTask(id, { acknowledged: true, note })}
         onReopen={canManage ? t.reopenTask : undefined}
         onEdit={
