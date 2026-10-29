@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, Tags, Pencil, Trash2, Loader2, User } from 'lucide-react';
+import { Plus, Tags, Pencil, Trash2, Loader2, User, X } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { CATEGORY_COLORS, DEFAULT_CATEGORIES } from '../lib/taskMeta';
@@ -10,6 +10,13 @@ import type { TaskCategory } from '../lib/types';
 interface Ctx {
   profile: NonNullable<ReturnType<typeof useAuth>['profile']>;
   isAdminOrAbove: boolean;
+}
+
+/** Fields edited through the inline "Edit" form of a category card. */
+interface CatEdit {
+  name: string;
+  description: string;
+  color: string;
 }
 
 /**

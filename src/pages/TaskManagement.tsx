@@ -121,7 +121,7 @@ export default function TaskManagement() {
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium"
               title="Create an official ORGANIZATION task (counted system-wide)"
             >
-              <Plus size={15} /> New Organization Task
+              <Plus size={15} /> New Task
             </button>
           )}
         </div>

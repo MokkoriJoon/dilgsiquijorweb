@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Task, TaskCategory } from '../lib/types';
 import { isAdminOrAbove as isAdminRole } from '../lib/types';
-import { STATUS_META, CATEGORY_COLORS } from '../lib/taskMeta';
+import {
+  CATEGORY_COLORS,
+  STATUS_META,
+  DEFAULT_CATEGORIES,
+} from '../lib/taskMeta';
+import { NAMED_CATEGORY_COLORS } from '../lib/categoryColors';
 import { describeRecurrence } from '../lib/recurrence';
 import {
   X,
@@ -140,6 +145,8 @@ export default function TaskFormModal({
 }: Props) {
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft());
   const [newCatName, setNewCatName] = useState('');
+  /** Colour chosen for the inline "New category" creation. */
+  const [newCatColor, setNewCatColor] = useState<string>(CATEGORY_COLORS[0]);
   const [showCatInput, setShowCatInput] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -215,16 +222,18 @@ export default function TaskFormModal({
     }
     const name = newCatName.trim();
     if (!name) return;
-    if (categoryOptions.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
-      setError(`Category “${name}” already exists.`);
+    // Friendly duplicate check BEFORE hitting the DB unique index — a raw
+    // `duplicate key value violates unique constraint "task_categories_name_key"`
+    // error otherwise scares users with the "Something went wrong" screen.
+    if (categories.some((c) => c.name.trim().toLowerCase() === name.toLowerCase())) {
+      setError(`Category “${name}” already exists. Pick it from the dropdown instead.`);
       return;
     }
-    const color = CATEGORY_COLORS[categoryOptions.length % CATEGORY_COLORS.length];
     const { data, error: err } = await supabase
       .from('task_categories')
       .insert({
         name,
-        color,
+        color: newCatColor,
         description: null,
         created_by: currentUserId ?? null,
         // Created from this admin surface → always an ORGANIZATION category.
@@ -234,7 +243,11 @@ export default function TaskFormModal({
       .select()
       .single();
     if (err) {
-      setError(err.message);
+      if (/duplicate key/i.test(err.message)) {
+        setError(`Category “${name}” already exists. Pick it from the dropdown instead.`);
+      } else {
+        setError(err.message);
+      }
       return;
     }
     const cat = data as TaskCategory;
@@ -242,6 +255,32 @@ export default function TaskFormModal({
     setNewCatName('');
     setShowCatInput(false);
     onCategoryCreated?.(cat);
+  }
+
+  /** Seed the standard DILG default categories in one click (skips existing). */
+  async function seedDefaults() {
+    if (!canCreateOrgTasks) return;
+    setSaving(true);
+    let failed = '';
+    for (const def of DEFAULT_CATEGORIES) {
+      const exists = categories.some((c) => c.name.trim().toLowerCase() === def.name.toLowerCase());
+      if (exists) continue;
+      const { error: err } = await supabase.from('task_categories').insert({
+        name: def.name,
+        color: def.color,
+        description: def.description,
+        created_by: currentUserId ?? null,
+        is_personal: false,
+        owner_id: null,
+      });
+      if (err && !/duplicate key/i.test(err.message)) {
+        failed = err.message;
+        break;
+      }
+    }
+    setSaving(false);
+    setError(failed);
+    if (!failed) onCategoryCreated?.({ id: '', name: '', color: null, description: null, created_by: null });
   }
 
   async function handleSubmit() {
@@ -424,20 +463,72 @@ export default function TaskFormModal({
               )}
             </div>
             {canCreateOrgTasks && showCatInput && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  placeholder="e.g., Peace & Order"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  onKeyDown={(e) => e.key === 'Enter' && addCategory()}
-                />
+              <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    placeholder="e.g., Peace & Order"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    onKeyDown={(e) => e.key === 'Enter' && addCategory()}
+                  />
+                  <button
+                    type="button"
+                    onClick={addCategory}
+                    className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {/* ── Colour selection for the new category ─────────────── */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-gray-600">Colour:</span>
+                  <select
+                    value={newCatColor}
+                    onChange={(e) => setNewCatColor(e.target.value)}
+                    className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    title="Badge colour of the new category"
+                  >
+                    {NAMED_CATEGORY_COLORS.map((c) => (
+                      <option key={c.hex} value={c.hex}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Live swatch + quick-pick dots */}
+                  <span
+                    className="w-6 h-6 rounded-md border border-gray-200 inline-block flex-shrink-0"
+                    style={{ backgroundColor: newCatColor }}
+                    title="Selected colour preview"
+                  />
+                  <span className="flex gap-1 flex-wrap">
+                    {NAMED_CATEGORY_COLORS.slice(0, 8).map((c) => (
+                      <button
+                        key={c.hex}
+                        type="button"
+                        onClick={() => setNewCatColor(c.hex)}
+                        title={c.name}
+                        className={`w-5 h-5 rounded-full border-2 transition-transform ${
+                          newCatColor === c.hex
+                            ? 'border-gray-800 scale-110'
+                            : 'border-transparent hover:scale-110'
+                        }`}
+                        style={{ backgroundColor: c.hex }}
+                      />
+                    ))}
+                  </span>
+                </div>
+
+                {/* One-click seed of the standard DILG categories */}
                 <button
                   type="button"
-                  onClick={addCategory}
-                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
+                  onClick={seedDefaults}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                  title="Adds the standard DILG categories (Reporting, Peace & Order, …) — existing ones are skipped"
                 >
-                  Add
+                  <Plus size={12} /> Add DILG default categories
                 </button>
               </div>
             )}
