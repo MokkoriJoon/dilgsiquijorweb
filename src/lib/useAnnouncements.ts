@@ -65,6 +65,27 @@ export function hasFiveW1H(a: Announcement): boolean {
   return Object.values(d).some((v) => (v ?? '').trim().length > 0);
 }
 
+/** Minimal registered-user row used by the "Make Announcement" WHO picker. */
+export interface RegisteredUserOption {
+  id: string;
+  full_name: string | null;
+  position: string | null;
+}
+
+/**
+ * Fetch the REGISTERED USERS (profiles) so the announcement form can offer a
+ * "Registered Users" checkbox list for the WHO field. Names picked here are
+ * stored in `whois` as a plain comma-separated list of full names.
+ */
+export async function fetchRegisteredUsers(): Promise<RegisteredUserOption[]> {
+  const res = await supabase
+    .from('profiles')
+    .select('id,full_name,position')
+    .order('full_name');
+  if (res.error) return [];
+  return (res.data ?? []) as RegisteredUserOption[];
+}
+
 export function useAnnouncements() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);

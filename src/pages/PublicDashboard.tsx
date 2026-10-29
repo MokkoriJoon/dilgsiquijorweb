@@ -99,7 +99,7 @@ function AnnouncementPanel({
     <div className="relative flex min-w-0 max-w-full items-center justify-end gap-1.5 sm:gap-2">
       {/* ── Preview carousel (LEFT of the News button) ── */}
       {!loading && items.length > 0 && (
-        <div className="flex min-w-0 items-center gap-0.5 rounded-lg bg-white/10 px-1 py-0.5">
+        <div className="flex min-w-0 items-center gap-1 rounded-lg bg-white/10 px-1.5 py-1 lg:px-2.5 lg:py-1.5">
           {items.length > 1 && (
             <button
               type="button"
@@ -115,9 +115,9 @@ function AnnouncementPanel({
             onClick={() => setOpen(true)}
             title={current.title}
             aria-label={`Announcement preview: ${current.title}`}
-            className="min-w-0 max-w-[140px] sm:max-w-[220px] md:max-w-[280px] px-1 text-left"
+            className="min-w-0 max-w-[140px] sm:max-w-[260px] md:max-w-[360px] lg:max-w-[520px] xl:max-w-[680px] px-1 text-left"
           >
-            <span key={current.id} className="block truncate text-[11px] sm:text-xs font-semibold text-white animate-[annFade_.6s_ease]">
+            <span key={current.id} className="block truncate text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-white animate-[annFade_.6s_ease]">
               📢 {current.title}
             </span>
           </button>
@@ -134,22 +134,22 @@ function AnnouncementPanel({
         </div>
       )}
 
-      {/* ── News button — NO red number badge ── */}
+      {/* ── News button — NO red number badge (bigger on wide screens) ── */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         title="Announcements"
-        className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-2 text-sm font-bold transition-colors"
+        className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white px-3 py-2 text-sm lg:px-4 lg:py-2.5 lg:text-base font-bold transition-colors"
       >
-        <Megaphone size={14} /> News
+        <Megaphone size={16} className="lg:w-[18px] lg:h-[18px]" /> News
       </button>
 
       {open && (
         <>
           {/* Click-outside backdrop closes the dropdown. */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
-          <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] max-h-[min(24rem,70vh)] overflow-y-auto rounded-xl bg-white text-gray-800 shadow-xl ring-1 ring-black/5">
+          <div className="absolute right-0 z-50 mt-2 w-96 max-w-[calc(100vw-1.5rem)] lg:w-[480px] max-h-[min(30rem,75vh)] overflow-y-auto rounded-xl bg-white text-gray-800 shadow-xl ring-1 ring-black/5">
             <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
               <h2 className="text-sm font-bold flex items-center gap-2 text-blue-900 min-w-0">
                 <Megaphone size={15} className="text-blue-600 flex-shrink-0" />
