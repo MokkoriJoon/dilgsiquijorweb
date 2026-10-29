@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   frequency TEXT DEFAULT 'one-time',
   status TEXT DEFAULT 'pending'
     CHECK (status IN ('pending', 'in-progress', 'completed')),
-  assigned_to UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  -- assigned_to is nullable + ON DELETE SET NULL: deleting a user's LOGIN
+  -- must never destroy organization tasks they were assigned / created.
+  assigned_to UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   assigned_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -88,6 +90,9 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 --     (Fixes: "column tasks.start_date does not exist",
 --             "Could not find the 'category_id' column of 'tasks'")
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS start_date      TIMESTAMPTZ;
+-- Attribution: who created the task. SET NULL (not CASCADE) so deleting a
+-- user's LOGIN never destroys tasks they made on the website.
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS created_by      UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS days_of_week     INTEGER[] DEFAULT '{}';
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS repeat_forever   BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS category_id      UUID;
@@ -111,9 +116,53 @@ UPDATE public.tasks SET start_date = due_date WHERE start_date IS NULL AND due_d
 -- Personal items are private to their owner: they are NEVER viewable,
 -- selectable or counted system-wide (public board, dashboards, statistics).
 ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES public.profiles(id) ON DELETE CASCADE;
+-- owner_id uses SET NULL so org rows survive a login deletion; the
+-- admin_delete_user RPC deletes PERSONAL rows explicitly beforehand.
+ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.task_categories ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE public.task_categories ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.task_categories ADD COLUMN IF NOT EXISTS owner_id    UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+-- Migration: relax legacy CASCADE FKs so that deleting a user's LOGIN never
+-- destroys content they made/edited on the website (org tasks/categories).
+-- Personal rows are removed explicitly by admin_delete_user() instead.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  -- tasks.assigned_to: NOT NULL + CASCADE → nullable + SET NULL
+  BEGIN
+    ALTER TABLE public.tasks ALTER COLUMN assigned_to DROP NOT NULL;
+  EXCEPTION WHEN others THEN NULL;
+  END IF;
+  FOR r IN
+    SELECT con.conname
+    FROM pg_constraint con
+    JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+    WHERE con.conrelid = 'public.tasks'::regclass AND con.contype = 'f'
+      AND att.attname IN ('assigned_to', 'owner_id')
+  LOOP
+    EXECUTE format('ALTER TABLE public.tasks DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  ALTER TABLE public.tasks
+    ADD CONSTRAINT tasks_assigned_to_fkey
+    FOREIGN KEY (assigned_to) REFERENCES public.profiles(id) ON DELETE SET NULL;
+  ALTER TABLE public.tasks
+    ADD CONSTRAINT tasks_owner_id_fkey
+    FOREIGN KEY (owner_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+  -- task_categories.owner_id: CASCADE → SET NULL (personal cats deleted by RPC)
+  FOR r IN
+    SELECT con.conname
+    FROM pg_constraint con
+    JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+    WHERE con.conrelid = 'public.task_categories'::regclass AND con.contype = 'f'
+      AND att.attname = 'owner_id'
+  LOOP
+    EXECUTE format('ALTER TABLE public.task_categories DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  ALTER TABLE public.task_categories
+    ADD CONSTRAINT task_categories_owner_id_fkey
+    FOREIGN KEY (owner_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_owner_personal     ON public.tasks (owner_id) WHERE is_personal;
 CREATE INDEX IF NOT EXISTS idx_categories_owner_personal ON public.task_categories (owner_id) WHERE is_personal;
@@ -603,6 +652,63 @@ BEGIN
      SET encrypted_password = public.crypt(p_password, public.gen_salt('bf')),
          updated_at = NOW()
    WHERE id = p_user_id;
+END $$;
+
+-- 7c) SECURITY DEFINER RPC: SUPER_ADMIN deletes a user's LOGIN completely.
+--     • The auth account (auth.users) is removed — the user can no longer
+--       sign in at all. The profiles row disappears via ON DELETE CASCADE.
+--     • Everything the user MADE / UPLOADED / EDITED on the website —
+--       organization tasks, categories, announcements, links — is KEPT.
+--       Attribution columns (assigned_by, created_by, author_id…) fall back
+--       to NULL ('—') through ON DELETE SET NULL.
+--     • STANDARD users additionally lose their PERSONAL items (personal
+--       tasks, personal categories, bookmarks, avatar files), which existed
+--       only for them. ADMIN / SUPER_ADMIN content is never destroyed.
+CREATE OR REPLACE FUNCTION public.admin_delete_user(p_user_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_caller_role TEXT;
+  v_target_role TEXT;
+BEGIN
+  SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' THEN
+    RAISE EXCEPTION 'Only SUPER_ADMIN can delete users';
+  END IF;
+
+  IF p_user_id = auth.uid() THEN
+    RAISE EXCEPTION 'You cannot delete your own account';
+  END IF;
+
+  SELECT role INTO v_target_role FROM public.profiles WHERE id = p_user_id;
+  IF v_target_role IS NULL AND NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user_id) THEN
+    RAISE EXCEPTION 'User not found';
+  END IF;
+
+  IF v_target_role = 'STANDARD' THEN
+    -- Personal items belonged to this person alone → remove them.
+    DELETE FROM public.tasks          WHERE is_personal AND owner_id = p_user_id;
+    DELETE FROM public.task_categories WHERE is_personal AND owner_id = p_user_id;
+    DELETE FROM public.bookmarks      WHERE user_id = p_user_id;
+  END IF;
+  -- ADMIN / SUPER_ADMIN: NOTHING they created/edited/uploaded is touched.
+
+  -- Remove the avatar file(s) from Storage (best-effort).
+  BEGIN
+    DELETE FROM storage.objects
+      WHERE bucket_id = 'avatars'
+        AND (storage.foldername(name))[1] = p_user_id::text;
+  EXCEPTION WHEN others THEN NULL;
+  END IF;
+
+  -- Delete the login itself (cascades to public.profiles).
+  DELETE FROM auth.users WHERE id = p_user_id;
+
+  -- Safety net for any orphaned profile row.
+  DELETE FROM public.profiles WHERE id = p_user_id;
 END $$;
 
 -- 8) PROFILE PICTURES — Supabase Storage ("avatars" bucket)

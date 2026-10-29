@@ -42,6 +42,25 @@ export default function UserManagement() {
 
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /* Content that belongs ONLY to the target and will be removed with the
+     login (personal tasks / personal categories / bookmarks — STANDARD). */
+  const [deleteImpact, setDeleteImpact] = useState<{ personalTasks: number; personalCategories: number; bookmarks: number } | null>(null);
+
+  async function openDelete(user: Profile) {
+    setDeleteTarget(user);
+    setDeleteImpact(null);
+    if (user.role !== 'STANDARD') return; // ADMIN/SUPER_ADMIN content is never deleted
+    const [{ data: pt }, { data: pc }, { data: bm }] = await Promise.all([
+      supabase.from('tasks').select('id').eq('is_personal', true).eq('owner_id', user.id),
+      supabase.from('task_categories').select('id').eq('is_personal', true).eq('owner_id', user.id),
+      supabase.from('bookmarks').select('id').eq('user_id', user.id),
+    ]);
+    setDeleteImpact({
+      personalTasks: pt?.length ?? 0,
+      personalCategories: pc?.length ?? 0,
+      bookmarks: bm?.length ?? 0,
+    });
+  }
 
   /* ── Reset-password modal (key icon) ─────────────────────────────────── */
   const [pwTarget, setPwTarget] = useState<Profile | null>(null);
@@ -61,6 +80,10 @@ export default function UserManagement() {
 
   async function sendResetLink() {
     if (!pwTarget) return;
+    if (!pwTarget.email) {
+      setPwError('This user has no email on file, so a reset link cannot be sent.');
+      return;
+    }
     setPwError('');
     setPwBusy(true);
     try {
@@ -250,16 +273,22 @@ export default function UserManagement() {
   async function confirmDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
-    // Deleting the profile row cascades to tasks (ON DELETE CASCADE).
-    // The linked auth account should also be removed via Supabase Dashboard
-    // (Authentication → Users) or a service-role edge function.
-    const { error } = await supabase
-      .from('profiles')
-      .delete()
-      .eq('id', deleteTarget.id);
+    setPageError('');
+    // Deletes the user's LOGIN (auth.users row in Supabase) completely.
+    // Everything they made / edited on the website (org tasks, categories,
+    // announcements…) is PRESERVED — attribution falls back to '—'.
+    // STANDARD users additionally lose only their personal items.
+    const { error } = await supabase.rpc('admin_delete_user', {
+      p_user_id: deleteTarget.id,
+    });
     setDeleting(false);
     if (error) {
-      setPageError(error.message);
+      const m = error.message ?? '';
+      setPageError(
+        /admin_delete_user|does not exist|function|schema cache/i.test(m)
+          ? 'The admin_delete_user function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7c), then try again.'
+          : m,
+      );
       return;
     }
     setDeleteTarget(null);
@@ -401,7 +430,7 @@ export default function UserManagement() {
                           <Pencil size={15} />
                         </button>
                         <button
-                          onClick={() => setDeleteTarget(user)}
+                          onClick={() => openDelete(user)}
                           disabled={user.id === profile.id}
                           title={
                             user.id === profile.id
@@ -424,8 +453,10 @@ export default function UserManagement() {
 
       <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">
         <CalendarDays size={12} />
-        Note: removing a user here deletes their profile &amp; tasks. To fully delete
-        their login account, remove them in Supabase → Authentication → Users.
+        Note: deleting a user removes their <span className="font-medium">login</span>{' '}
+        completely (Supabase auth account included). Tasks, categories and
+        announcements they created or edited are kept; only a STANDARD
+        user&apos;s personal tasks, personal categories and bookmarks are removed.
       </p>
 
       {/* Create / Edit modal */}
@@ -644,11 +675,35 @@ export default function UserManagement() {
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setDeleteTarget(null)} />
           <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
-            <h3 className="text-lg font-bold text-gray-800">Delete user?</h3>
+            <h3 className="text-lg font-bold text-gray-800">Delete user&apos;s login?</h3>
             <p className="text-sm text-gray-500 mt-1">
-              <span className="font-medium">{deleteTarget.full_name}</span> and all of
-              their task assignments will be removed. This cannot be undone.
+              <span className="font-medium">{deleteTarget.full_name}</span> ({deleteTarget.email})
+              will be <span className="font-semibold text-red-600">completely removed from
+              Supabase</span> and can no longer sign in. This cannot be undone.
             </p>
+            <div className="mt-3 rounded-lg bg-gray-50 border border-gray-100 p-3 text-xs text-gray-600 space-y-1">
+              <p className="font-semibold text-gray-700">What happens to their content?</p>
+              <p>
+                • {deleteTarget.role === 'STANDARD' ? (
+                    <>Personal tasks, personal categories and bookmarks of this{' '}
+                    <span className="font-semibold">Standard</span> user are deleted.</>
+                  ) : (
+                    <>Everything this <span className="font-semibold">{deleteTarget.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin'}</span>{' '}
+                    made, uploaded or edited — tasks, categories, announcements — is KEPT.</>
+                  )}
+              </p>
+              <p>• Organization tasks, categories and announcements are never destroyed; the author name simply becomes “—”.</p>
+              {deleteTarget.role === 'STANDARD' && deleteImpact && (
+                <p className="text-red-600 font-medium">
+                  Will be removed with this login: {deleteImpact.personalTasks} personal task(s)
+                  · {deleteImpact.personalCategories} personal category(ies)
+                  · {deleteImpact.bookmarks} bookmark(s).
+                </p>
+              )}
+              {deleteTarget.role === 'STANDARD' && !deleteImpact && (
+                <p className="text-gray-400 italic">Counting their personal items…</p>
+              )}
+            </div>
             <div className="flex justify-end gap-2 mt-6">
               <button
                 onClick={() => setDeleteTarget(null)}
@@ -662,7 +717,7 @@ export default function UserManagement() {
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 flex items-center gap-2"
               >
                 {deleting && <Loader2 size={15} className="animate-spin" />}
-                Delete User
+                Delete Login
               </button>
             </div>
           </div>
