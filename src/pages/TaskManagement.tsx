@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import { Plus, RefreshCw, AlertTriangle, FolderTree, Search, X } from 'lucide-react';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { Plus, RefreshCw, AlertTriangle, FolderTree, Search, X, FolderOpen } from 'lucide-react';
 import { useAuth } from '../lib/useAuth';
 import { useTasks } from '../lib/useTasks';
 import { friendlyDbError } from '../lib/dbErrors';
@@ -28,6 +28,20 @@ interface Ctx {
 export default function TaskManagement() {
   const { profile, isAdminOrAbove } = useOutletContext<Ctx>();
   const t = useTasks(profile);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  /** Folder Categories → clicking a category opens this view pre-filtered
+   *  via ?category=<id>&name=<display name>. */
+  const categoryFilterId = searchParams.get('category');
+  const categoryFilterName = searchParams.get('name') ?? 'this category';
+
+  function clearCategoryFilter() {
+    const next = new URLSearchParams(searchParams);
+    next.delete('category');
+    next.delete('name');
+    setSearchParams(next, { replace: true });
+  }
+
   const [filter, setFilter] = useState<StatFilter>('all');
   const [freqs, setFreqs] = useState<TaskFrequency[]>([]);
   const [q, setQ] = useState('');
@@ -52,6 +66,7 @@ export default function TaskManagement() {
     // SUPER ADMIN repository = ORGANIZATION tasks ONLY. Personal tasks are
     // private to their owner and never listed or counted here.
     let items = t.orgTasks;
+    if (categoryFilterId) items = items.filter((x) => x.category_id === categoryFilterId);
     if (filter !== 'all') items = items.filter((x) => t.statusOf(x) === filter);
     if (freqs.length > 0) items = items.filter((x) => freqs.includes(x.frequency));
     if (q.trim()) {
@@ -64,19 +79,22 @@ export default function TaskManagement() {
       );
     }
     return items;
-  }, [t.orgTasks, t.statusOf, filter, freqs, q]);
+  }, [t.orgTasks, t.statusOf, filter, freqs, q, categoryFilterId]);
 
   /** Per-frequency counts within the currently selected status card. */
   const freqCounts = useMemo(() => {
-    const base = filter === 'all' ? t.orgTasks : t.orgTasks.filter((x) => t.statusOf(x) === filter);
+    const baseRaw = categoryFilterId
+      ? t.orgTasks.filter((x) => x.category_id === categoryFilterId)
+      : t.orgTasks;
+    const base = filter === 'all' ? baseRaw : baseRaw.filter((x) => t.statusOf(x) === filter);
     const map: Partial<Record<TaskFrequency, number>> = {};
     base.forEach((x) => {
       map[x.frequency] = (map[x.frequency] ?? 0) + 1;
     });
     return map;
-  }, [t.orgTasks, t.statusOf, filter]);
+  }, [t.orgTasks, t.statusOf, filter, freqs, categoryFilterId]);
 
-  const filtersActive = filter !== 'all' || freqs.length > 0;
+  const filtersActive = filter !== 'all' || freqs.length > 0 || !!categoryFilterId;
 
   async function handleSubmit(draft: Parameters<typeof draftToPayload>[0]) {
     const payload = draftToPayload(draft);
@@ -140,6 +158,23 @@ export default function TaskManagement() {
         </div>
       )}
 
+      {/* Category ("folder") view banner — set from Folder Categories clicks */}
+      {categoryFilterId && (
+        <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4">
+          <FolderOpen size={16} className="text-blue-600 flex-shrink-0" />
+          <span className="text-sm font-semibold text-blue-800 break-words min-w-0">
+            Tasks in category: {categoryFilterName}
+          </span>
+          <span className="text-xs text-blue-600">{list.length} task(s)</span>
+          <button
+            onClick={clearCategoryFilter}
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+          >
+            <X size={12} /> Show all categories
+          </button>
+        </div>
+      )}
+
       <StatsCards stats={t.stats.all} active={filter} onSelect={handleCardSelect} />
 
       <FrequencyFilter
@@ -175,6 +210,7 @@ export default function TaskManagement() {
             onClick={() => {
               setFilter('all');
               setFreqs([]);
+              clearCategoryFilter();
             }}
             className="text-[11px] font-semibold text-red-600 hover:underline ml-1"
           >

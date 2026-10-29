@@ -324,6 +324,28 @@ function AnnouncementFormModal({
     );
   }, [users, userSearch]);
 
+  /** Names currently visible in the (search-filtered) registered-users list. */
+  const visibleNames = useMemo(
+    () => filteredUsers.map((u) => u.full_name ?? u.id),
+    [filteredUsers],
+  );
+
+  /** Are ALL currently-visible users already selected? */
+  const allVisibleSelected =
+    visibleNames.length > 0 && visibleNames.every((n) => selectedNames.includes(n));
+
+  /** Select All / Deselect All — respects the active search filter. */
+  function toggleSelectAll() {
+    setSelectedNames((prev) => {
+      if (allVisibleSelected) {
+        // Remove only the visible ones; keep any selections hidden by search.
+        const visibleSet = new Set(visibleNames);
+        return prev.filter((n) => !visibleSet.has(n));
+      }
+      return Array.from(new Set([...prev, ...visibleNames]));
+    });
+  }
+
   /* ── WHEN — calendar-style date + time pickers ──────────────────────── */
   const [whenDate, setWhenDate] = useState(() => extractDate(d.when));
   const [whenTime, setWhenTime] = useState(() => extractTime(d.when));
@@ -415,6 +437,19 @@ function AnnouncementFormModal({
                   {selectedNames.length} selected
                 </span>
               )}
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                disabled={usersLoading || visibleNames.length === 0}
+                className="ml-auto rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={
+                  allVisibleSelected
+                    ? 'Unselect all users shown in the list'
+                    : 'Select every user shown in the list'
+                }
+              >
+                {allVisibleSelected ? 'Deselect All' : 'Select All'}
+              </button>
             </label>
             <input
               value={userSearch}

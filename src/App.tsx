@@ -12,6 +12,7 @@ const MyTasks = lazy(() => import('./pages/MyTasks'));
 const TaskManagement = lazy(() => import('./pages/TaskManagement'));
 const ResourceLinks = lazy(() => import('./pages/ResourceLinks'));
 const Categories = lazy(() => import('./pages/Categories'));
+const FolderCategories = lazy(() => import('./pages/FolderCategories'));
 const Announcements = lazy(() => import('./pages/Announcements'));
 const SiteSettings = lazy(() => import('./pages/SiteSettings'));
 const PublicDashboard = lazy(() => import('./pages/PublicDashboard'));
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="task-management" element={<TaskManagement />} />
           <Route path="resources" element={<ResourceLinks />} />
           <Route path="categories" element={<Categories />} />
+          <Route path="folder-categories" element={<FolderCategories />} />
           <Route path="announcements" element={<Announcements />} />
           <Route path="users" element={<UserManagement />} />
           <Route path="settings" element={<SiteSettings />} />
