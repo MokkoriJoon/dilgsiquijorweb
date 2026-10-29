@@ -62,7 +62,7 @@ export function fiveW1H(a: Announcement): Required<AnnouncementDetails> {
 /** True when at least one of the optional 5W1H fields has content. */
 export function hasFiveW1H(a: Announcement): boolean {
   const d = fiveW1H(a);
-  return Object.values(d).some((v) => v.trim().length > 0);
+  return Object.values(d).some((v) => (v ?? '').trim().length > 0);
 }
 
 export function useAnnouncements() {

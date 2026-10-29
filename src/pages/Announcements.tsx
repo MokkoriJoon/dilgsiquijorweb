@@ -113,13 +113,13 @@ export default function Announcements() {
                   {/* 5W1H extras — shown only when filled in */}
                   {(() => {
                     const d = fiveW1H(an);
-                    const rows: Array<[string, string]> = ([
+                    const rows = [
                       ['Who', d.whois],
                       ['When', d.when],
                       ['Where', d.whereis],
                       ['Why', d.why],
                       ['How', d.how],
-                    ) as Array<[string, string]>;
+                    ] as Array<[string, string]>;
                     return rows
                       .filter(([, v]) => v.trim())
                       .map(([label, v]) => (
