@@ -132,7 +132,7 @@ BEGIN
   BEGIN
     ALTER TABLE public.tasks ALTER COLUMN assigned_to DROP NOT NULL;
   EXCEPTION WHEN others THEN NULL;
-  END IF;
+  END;
   FOR r IN
     SELECT con.conname
     FROM pg_constraint con
@@ -702,7 +702,7 @@ BEGIN
       WHERE bucket_id = 'avatars'
         AND (storage.foldername(name))[1] = p_user_id::text;
   EXCEPTION WHEN others THEN NULL;
-  END IF;
+  END;
 
   -- Delete the login itself (cascades to public.profiles).
   DELETE FROM auth.users WHERE id = p_user_id;

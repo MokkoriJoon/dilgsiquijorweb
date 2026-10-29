@@ -121,7 +121,7 @@ BEGIN
       WHERE bucket_id = 'avatars'
         AND (storage.foldername(name))[1] = p_user_id::text;
   EXCEPTION WHEN others THEN NULL;
-  END IF;
+  END;
 
   -- Delete the login itself. The profiles row disappears via the existing
   -- `ON DELETE CASCADE` FK (profiles.id → auth.users.id).
