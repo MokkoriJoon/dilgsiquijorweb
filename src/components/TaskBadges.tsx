@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../lib/types';
 import { STATUS_META } from '../lib/taskMeta';
-import { describeRecurrence, nextOccurrence, daysUntil } from '../lib/recurrence';
+import { describeRecurrence, nextOccurrence, daysUntil, resolveTaskStatus } from '../lib/recurrence';
 import { formatDueDate } from '../lib/useTasks';
-import { CalendarDays, RefreshCw, Link2, Users } from 'lucide-react';
+import { CalendarDays, RefreshCw, Link2, Users, AlertTriangle } from 'lucide-react';
 
 /**
  * Status / recurrence / category badges used by every task list.
@@ -81,12 +81,21 @@ export function DueBadge({ task, status }: { task: Task; status: 'completed' | '
 }
 
 /**
- * "Assigned: Name +N" — the "+N" chip is CLICKABLE (not hover-only): it opens
- * a small popover listing every user assigned to the task. Clicking anywhere
- * outside (or pressing Escape) closes it.
+ * "Assigned: Name +N" — ONE row per task no matter how many users are assigned.
+ *  • The first assignee's name is shown plus a clickable "+N" chip holding the
+ *    remaining names; clicking it opens a popover listing EVERY assigned user
+ *    together with their own state (Done / Pending / Overdue).
+ *  • `overdueCount` additionally renders a red "+N" chip right next to the
+ *    list — that chip is clickable too and jumps straight to the members who
+ *    are overdue, so nobody has to scroll hunting for them.
  */
-export function AssigneeList({ task }: { task: Task }) {
+export function AssigneeList({ task, overdueCount = 0 }: { task: Task; overdueCount?: number }) {
   const people = task.assignee_profiles ?? [];
+  // Per-user certification lives on task_assignments; fall back to the whole
+  // task being completed when the join rows have not been loaded yet.
+  const doneIds = new Set(
+    (task.assignments ?? []).filter((a) => a.completed || task.status === 'completed').map((a) => a.user_id),
+  );
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
@@ -109,41 +118,96 @@ export function AssigneeList({ task }: { task: Task }) {
   if (people.length === 0) {
     return <span className="text-gray-400">Unassigned</span>;
   }
-  if (people.length === 1) {
-    return <span className="font-medium text-gray-600">{people[0].full_name ?? 'Staff'}</span>;
-  }
+
+  const sliceState = (userId: string): 'done' | 'pending' | 'overdue' => {
+    if (doneIds.has(userId)) return 'done';
+    const s = resolveTaskStatus(task);
+    return s === 'overdue' ? 'overdue' : 'pending';
+  };
+
+  const single = people.length === 1;
+  const firstName = people[0].full_name ?? 'Staff';
+  const firstNameState = sliceState(people[0].id);
+
   return (
     <span className="inline-flex items-center gap-1 relative" ref={ref}>
-      <Users size={12} />
-      <span className="font-medium text-gray-600">{people[0].full_name ?? 'Staff'}</span>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        className="text-[10px] rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold px-1.5 py-0.5 cursor-pointer transition-colors"
-        title={`View all ${people.length} assigned users`}
-        aria-expanded={open}
+      {!single && <Users size={12} />}
+      <span
+        className={`font-medium ${
+          firstNameState === 'done'
+            ? 'text-green-700'
+            : firstNameState === 'overdue'
+              ? 'text-red-600'
+              : 'text-gray-600'
+        }`}
+        title={firstNameState === 'done' ? `${firstName} — completed their part` : undefined}
       >
-        +{people.length - 1}
-      </button>
+        {firstName}
+        {firstNameState === 'done' && !single ? ' ✓' : ''}
+      </span>
+
+      {!single && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+            className="text-[10px] rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold px-1.5 py-0.5 cursor-pointer transition-colors"
+            title={`View all ${people.length} assigned users`}
+            aria-expanded={open}
+          >
+            +{people.length - 1}
+          </button>
+
+          {overdueCount > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen((v) => !v);
+              }}
+              className="text-[10px] rounded-full bg-red-100 text-red-700 hover:bg-red-200 border border-red-200 font-semibold px-1.5 py-0.5 cursor-pointer transition-colors inline-flex items-center gap-1"
+              title={`${overdueCount} assigned user${overdueCount === 1 ? ' is' : 's are'} overdue — click to see who`}
+              aria-expanded={open}
+            >
+              <AlertTriangle size={10} />
+              OVERDUE +{overdueCount}
+            </button>
+          )}
+        </>
+      )}
 
       {open && (
-        <span className="absolute left-0 top-full mt-1 z-30 w-56 rounded-lg border border-gray-200 bg-white shadow-lg p-2 block">
+        <span className="absolute left-0 top-full mt-1 z-30 w-60 rounded-lg border border-gray-200 bg-white shadow-lg p-2 block">
           <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-400 px-1 pb-1">
             Assigned users ({people.length})
           </span>
-          <span className="block max-h-40 overflow-y-auto divide-y divide-gray-50">
-            {people.map((p) => (
-              <span key={p.id} className="flex items-center gap-2 px-1 py-1 text-xs text-gray-700">
-                <Users size={11} className="text-gray-400 flex-shrink-0" />
-                <span className="min-w-0">
-                  <span className="font-medium block truncate">{p.full_name ?? 'Staff'}</span>
-                  {p.position && <span className="text-[10px] text-gray-400 block truncate">{p.position}</span>}
+          <span className="block max-h-48 overflow-y-auto divide-y divide-gray-50">
+            {people.map((p) => {
+              const st = sliceState(p.id);
+              return (
+                <span key={p.id} className="flex items-center gap-2 px-1 py-1 text-xs text-gray-700">
+                  <span
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      st === 'done' ? 'bg-green-500' : st === 'overdue' ? 'bg-red-500' : 'bg-amber-400'
+                    }`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium block truncate">{p.full_name ?? 'Staff'}</span>
+                    {p.position && <span className="text-[10px] text-gray-400 block truncate">{p.position}</span>}
+                  </span>
+                  <span
+                    className={`text-[10px] font-semibold flex-shrink-0 ${
+                      st === 'done' ? 'text-green-700' : st === 'overdue' ? 'text-red-600' : 'text-amber-700'
+                    }`}
+                  >
+                    {st === 'done' ? 'Done' : st === 'overdue' ? 'Overdue' : 'Pending'}
+                  </span>
                 </span>
-              </span>
-            ))}
+              );
+            })}
           </span>
         </span>
       )}
