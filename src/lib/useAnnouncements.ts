@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './supabase';
+import { useRealtimeTableChanges } from './realtime';
 import type { Profile } from './types';
 
 /**
