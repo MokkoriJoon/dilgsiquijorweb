@@ -48,6 +48,12 @@ export default function PublicDashboard() {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<PubFilter>('all');
+  /**
+   * The "All task assignments" list starts COLLAPSED (hidden) so the page
+   * opens straight on the priority board; the "View Tasks" button beside the
+   * heading toggles it open/closed.
+   */
+  const [tasksVisible, setTasksVisible] = useState(false);
 
   /** Clicking the already-active card clears the filter (shows all again). */
   function handleCardSelect(f: PubFilter) {
@@ -236,14 +242,40 @@ export default function PublicDashboard() {
           )}
         </div>
 
-        {/* ═══ FILTERED ASSIGNMENTS — directly under the cards, no scrolling ═══ */}
+        {/* ═══ FILTERED ASSIGNMENTS — hidden by default; "View Tasks" toggles ═══ */}
         <section className="mb-8">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700 border-l-4 border-blue-500 pl-3 mb-3">
-            {filter === 'all'
-              ? `All task assignments (${filteredSlices.length})`
-              : `${STATUS_META[filter].label} assignments (${filteredSlices.length})`}
-          </h2>
-          {filteredSlices.length === 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700 border-l-4 border-blue-500 pl-3">
+              {filter === 'all'
+                ? `All task assignments (${filteredSlices.length})`
+                : `${STATUS_META[filter].label} assignments (${filteredSlices.length})`}
+            </h2>
+            {/* View Tasks button BESIDE the heading — shows/hides the list. */}
+            <button
+              type="button"
+              onClick={() => setTasksVisible((v) => !v)}
+              aria-expanded={tasksVisible}
+              title={tasksVisible ? 'Hide the task assignments list' : 'Show the task assignments list'}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold shadow-sm transition-colors"
+            >
+              {tasksVisible ? (
+                <>
+                  <X size={13} /> Hide Tasks
+                </>
+              ) : (
+                <>
+                  <FolderOpen size={13} /> View Tasks
+                </>
+              )}
+            </button>
+          </div>
+          {!tasksVisible ? (
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 py-6 text-center">
+              <p className="text-gray-500 font-medium text-sm">
+                Task assignments are hidden. Click “View Tasks” to show them.
+              </p>
+            </div>
+          ) : filteredSlices.length === 0 ? (
             <div className="bg-white rounded-xl border border-dashed border-gray-300 py-10 text-center">
               <p className="text-gray-500 font-medium text-sm">
                 No {filter === 'all' ? '' : `${STATUS_META[filter].label.toLowerCase()} `}
