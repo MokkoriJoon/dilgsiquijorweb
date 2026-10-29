@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { friendlyDbError } from './dbErrors';
+import { useRealtimeTableChanges } from './realtime';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskLink } from './types';
 import { resolveTaskStatus } from './recurrence';
 import { effectiveDueDate } from './useTasks';
@@ -120,31 +121,26 @@ export function usePublicDashboard() {
     setLoading(false);
   }, []);
 
+  // Latest fetchData in a ref → subscription effect mounts once, never stale.
+  const fetchRef = useRef(fetchData);
+  fetchRef.current = fetchData;
+
   useEffect(() => {
-    fetchData();
+    fetchRef.current();
+    const timer = window.setInterval(() => fetchRef.current(), 60_000); // periodic safety refresh
+    return () => window.clearInterval(timer);
+  }, []);
 
-    // Live updates: any insert/update/delete on tasks refreshes the board.
-    const channel = supabase
-      .channel('public-dashboard')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tasks' },
-        () => fetchData(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'task_links' },
-        () => fetchData(),
-      )
-      .subscribe();
-
-    const timer = window.setInterval(fetchData, 60_000); // periodic safety refresh
-
-    return () => {
-      window.clearInterval(timer);
-      supabase.removeChannel(channel);
-    };
-  }, [fetchData]);
+  // Live updates: any insert/update/delete on these tables refreshes the board.
+  // Uses a PRIVATE unique channel topic — the old shared `channel('public-dashboard')`
+  // pattern could throw "cannot add `postgres_changes` callbacks … after
+  // `subscribe()`" when two instances mounted concurrently (StrictMode /
+  // navigation), crashing the page. See lib/realtime.ts.
+  useRealtimeTableChanges(
+    'public-dashboard',
+    ['tasks', 'task_links'],
+    useCallback(() => fetchRef.current(), []),
+  );
 
   const statusOf = useCallback((t: Task) => resolveTaskStatus(t), []);
 

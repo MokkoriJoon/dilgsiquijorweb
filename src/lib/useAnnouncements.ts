@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { useRealtimeTableChanges } from './realtime';
 import type { Profile } from './types';
@@ -131,21 +131,35 @@ export function useAnnouncements() {
     setLoading(false);
   }, []);
 
+  // Keep a ref to the latest fetchData so realtime / interval closures never
+  // go stale and the subscription effect runs exactly once per mount.
+  const fetchRef = useRef(fetchData);
+  fetchRef.current = fetchData;
+
+  // Initial load + periodic safety refresh.
   useEffect(() => {
-    fetchData();
-    // Live updates + periodic safety refresh (same pattern as the public board).
-    const channel = supabase
-      .channel('announcements')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () =>
-        fetchData(),
-      )
-      .subscribe();
-    const timer = window.setInterval(fetchData, 60_000);
-    return () => {
-      window.clearInterval(timer);
-      supabase.removeChannel(channel);
-    };
-  }, [fetchData]);
+    fetchRef.current();
+    const timer = window.setInterval(() => fetchRef.current(), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Live updates through a PRIVATE, unique channel topic.
+  // ---------------------------------------------------------------------------
+  // Previously this used `supabase.channel('announcements')`. Supabase keys
+  // channels by topic, so when two components mounted at once (AppLayout shell
+  // + the Announcements page, or React 18 StrictMode double-effects) they got
+  // the SAME channel object. The second `.on('postgres_changes', …)` call after
+  // the first one already ran `.subscribe()` threw:
+  //   "cannot add `postgres_changes` callbacks for realtime:announcements
+  //    after `subscribe()`"
+  // which crashed the Announcements tab with the ErrorBoundary screen.
+  // `useRealtimeTableChanges` creates one unique topic per hook instance and
+  // tears it down defensively — no collisions, no throws.
+  // ---------------------------------------------------------------------------
+  useRealtimeTableChanges('announcements', ['announcements'], useCallback(
+    () => fetchRef.current(),
+    [],
+  ));
 
   const create = useCallback(
     async (

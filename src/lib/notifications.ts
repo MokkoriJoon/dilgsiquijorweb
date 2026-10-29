@@ -36,6 +36,8 @@ export interface AppNotification {
 const DISMISSED_KEY = 'dennis_notif_dismissed_v2'; // ids the user cleared
 const READ_KEY = 'dennis_notif_read_v2'; // ids already seen (clicked / marked read)
 const PUSHED_KEY = 'dennis_notif_pushed_v2'; // ids already sent as browser push
+/** Per-user marker for the OVERDUE login pop-up ("YYYY-MM-DD:<userId>"). */
+const OVERDUE_POP_KEY = 'dennis_overdue_popup_v1';
 /**
  * Per-task "seen" markers — `task:<taskId>` entries stored inside READ_KEY.
  * Notification ids contain the day they were generated (`kind:taskId|d=YYYY-MM-DD`),
@@ -183,6 +185,55 @@ function fmtDue(due?: string | null): string {
   if (!due) return '(no date)';
   const d = new Date(due);
   return isNaN(d.getTime()) ? due.slice(0, 10) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/* ══════════════════════════ OVERDUE LOGIN POP-UP ══════════════════════════
+ * The OVERDUE notification MODAL (src/components/OverdueModal.tsx) pops up
+ * right after login when the staff member has tasks that are past deadline.
+ * These helpers decide WHEN it should fire and remember that it already did. */
+
+/** A user's overdue tasks — non-completed, assigned-to-me, deadline passed. */
+export function getOverdueTasks(tasks: Task[], userId: string): Task[] {
+  return tasks.filter((t) => {
+    if (t.status === 'completed') return false;
+    const mine = t.assigned_to === userId || (t.assignees ?? []).includes(userId);
+    if (!mine) return false;
+    const dd = daysUntilEffectiveDeadline(t);
+    return dd !== null && dd < 0;
+  });
+}
+
+/** Storage value marking the pop-up as handled for `userId` today. */
+function overduePopStamp(userId: string): string {
+  return `${new Date().toISOString().slice(0, 10)}:${userId}`;
+}
+
+/** True when the OVERDUE modal should auto-open for this user today. */
+export function shouldPopOverdue(userId: string | null | undefined, overdueCount: number): boolean {
+  if (!userId || overdueCount <= 0) return false;
+  try {
+    return localStorage.getItem(OVERDUE_POP_KEY) !== overduePopStamp(userId);
+  } catch {
+    return true; // storage unavailable → still show the alert once per mount
+  }
+}
+
+/** Remember that the OVERDUE modal was shown for this user today. */
+export function markOverduePopped(userId: string | null | undefined): void {
+  if (!userId) return;
+  try {
+    localStorage.setItem(OVERDUE_POP_KEY, overduePopStamp(userId));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Format "3 days overdue" style labels used by the modal rows. */
+export function overdueDaysLabel(task: Task): string {
+  const dd = daysUntilEffectiveDeadline(task);
+  if (dd === null) return 'No deadline recorded';
+  const n = Math.abs(dd);
+  return `${n} day${n === 1 ? '' : 's'} overdue`;
 }
 
 /** Ask for browser-notification permission (free, native API). */
