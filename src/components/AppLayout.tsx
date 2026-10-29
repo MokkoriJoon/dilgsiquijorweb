@@ -8,6 +8,7 @@ import {
   Menu,
   X,
   FolderTree,
+  Folder,
   Bookmark,
   Megaphone,
   Settings2,
@@ -65,6 +66,9 @@ export default function AppLayout() {
     // task totals anywhere.
     { to: '/app/announcements', label: 'Announcements', icon: Megaphone },
     { to: '/app/resources', label: 'Resource Links', icon: Bookmark },
+    // Folder Categories — visible to ALL roles. Opens the task repository;
+    // clicking a category folder shows every task under that category.
+    { to: '/app/folder-categories', label: 'Folder Categories', icon: Folder },
     ...(isAdminOrAbove
       ? [{ to: '/app/categories', label: 'Task Categories', icon: Tags }]
       : []),

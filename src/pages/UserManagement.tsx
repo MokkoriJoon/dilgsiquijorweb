@@ -13,6 +13,8 @@ import {
   Search,
   ShieldCheck,
   CalendarDays,
+  KeyRound,
+  MailCheck,
 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 
@@ -40,6 +42,80 @@ export default function UserManagement() {
 
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  /* ── Reset-password modal (key icon) ─────────────────────────────────── */
+  const [pwTarget, setPwTarget] = useState<Profile | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState('');
+  const [pwDone, setPwDone] = useState('');
+
+  function openResetPassword(user: Profile) {
+    setPwTarget(user);
+    setNewPassword('');
+    setConfirmPassword('');
+    setPwError('');
+    setPwDone('');
+  }
+
+  async function sendResetLink() {
+    if (!pwTarget) return;
+    setPwError('');
+    setPwBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(pwTarget.email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (error) setPwError(error.message);
+      else
+        setPwDone(
+          `A password-reset link was sent to ${pwTarget.email}. The user can use it on the login page (“Forgot Password?” flow) to choose a new password.`,
+        );
+    } catch {
+      setPwError('Failed to send reset email. Please try again.');
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
+  async function setUserPasswordDirectly() {
+    if (!pwTarget) return;
+    setPwError('');
+    if (newPassword.length < 8) {
+      setPwError('New password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError('Passwords do not match.');
+      return;
+    }
+    setPwBusy(true);
+    try {
+      // SECURITY DEFINER RPC (see supabase/schema.sql): updates auth.users
+      // directly so the Super Admin can set a temporary password for a user.
+      const { error } = await supabase.rpc('admin_set_user_password', {
+        p_user_id: pwTarget.id,
+        p_password: newPassword,
+      });
+      if (error) {
+        const m = error.message ?? '';
+        setPwError(
+          /admin_set_user_password|does not exist|function/i.test(m)
+            ? 'The admin_set_user_password function is missing. Open Supabase → SQL Editor and run the function block from supabase/schema.sql once.'
+            : m,
+        );
+      } else {
+        setPwDone(
+          `Password updated for ${pwTarget.full_name ?? pwTarget.email}. Share the new temporary password securely — the user should change it after signing in.`,
+        );
+        setNewPassword('');
+        setConfirmPassword('');
+      }
+    } finally {
+      setPwBusy(false);
+    }
+  }
 
   const loadUsers = async () => {
     setLoading(true);
@@ -311,6 +387,13 @@ export default function UserManagement() {
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={() => openResetPassword(user)}
+                          title="Forgot / change this user's password"
+                          className="p-2 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors"
+                        >
+                          <KeyRound size={15} />
+                        </button>
+                        <button
                           onClick={() => openEdit(user)}
                           title="Edit user"
                           className="p-2 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
@@ -453,6 +536,104 @@ export default function UserManagement() {
                 {saving && <Loader2 size={15} className="animate-spin" />}
                 {form.id ? 'Save Changes' : 'Create User'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset / change password modal (key icon) */}
+      {pwTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setPwTarget(null)} />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <KeyRound size={18} className="text-amber-600" />
+                <span className="truncate">Reset Password</span>
+              </h3>
+              <button
+                onClick={() => setPwTarget(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4 break-words">
+              For <span className="font-semibold">{pwTarget.full_name ?? '—'}</span>{' '}
+              <span className="text-gray-400">({pwTarget.email})</span>
+            </p>
+
+            {pwError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <p className="text-red-700 text-sm break-words">{pwError}</p>
+              </div>
+            )}
+            {pwDone && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+                <p className="text-green-700 text-sm break-words">{pwDone}</p>
+              </div>
+            )}
+
+            {/* Option 1 — email a reset link (forgot-password flow) */}
+            <div className="border border-gray-200 rounded-lg p-4 mb-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-1">
+                Send password-reset email
+              </h4>
+              <p className="text-xs text-gray-500 mb-3">
+                The user receives a link to choose a new password themselves (same flow as
+                “Forgot Password?” on the login page).
+              </p>
+              <button
+                onClick={sendResetLink}
+                disabled={pwBusy}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50"
+              >
+                {pwBusy ? <Loader2 size={15} className="animate-spin" /> : <MailCheck size={15} />}
+                Send Reset Link
+              </button>
+            </div>
+
+            {/* Option 2 — set a new temporary password directly */}
+            <div className="border border-gray-200 rounded-lg p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-1">
+                Set a new password directly
+              </h4>
+              <p className="text-xs text-gray-500 mb-3">
+                Creates a temporary password you can share with the user securely.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    New Password *
+                  </label>
+                  <PasswordInput
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Minimum 8 characters"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-sm pr-10"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Confirm Password *
+                  </label>
+                  <PasswordInput
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter the new password"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none text-sm pr-10"
+                  />
+                </div>
+                <button
+                  onClick={setUserPasswordDirectly}
+                  disabled={pwBusy || !newPassword || !confirmPassword}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                >
+                  {pwBusy && <Loader2 size={15} className="animate-spin" />}
+                  Update Password
+                </button>
+              </div>
             </div>
           </div>
         </div>

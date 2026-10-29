@@ -565,6 +565,41 @@ BEGIN
   RETURN v_user_id;
 END $$;
 
+-- 7b) SECURITY DEFINER RPC: allow a SUPER_ADMIN to set (change/reset) another
+--     user's password directly from User Management (key icon). The client
+--     never touches auth.users — this function does, after verifying the
+--     caller is a SUPER_ADMIN.
+CREATE OR REPLACE FUNCTION public.admin_set_user_password(
+  p_user_id UUID,
+  p_password TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_role TEXT;
+BEGIN
+  SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' THEN
+    RAISE EXCEPTION 'Only SUPER_ADMIN can change user passwords';
+  END IF;
+
+  IF length(coalesce(p_password, '')) < 8 THEN
+    RAISE EXCEPTION 'Password must be at least 8 characters';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user_id) THEN
+    RAISE EXCEPTION 'User not found';
+  END IF;
+
+  UPDATE auth.users
+     SET encrypted_password = public.crypt(p_password, public.gen_salt('bf')),
+         updated_at = NOW()
+   WHERE id = p_user_id;
+END $$;
+
 -- 8) PROFILE PICTURES — Supabase Storage ("avatars" bucket)
 -- ---------------------------------------------------------------------
 -- Every user can add/edit their own profile picture. The client compresses
