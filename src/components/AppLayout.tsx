@@ -9,6 +9,7 @@ import {
   X,
   FolderTree,
   Bookmark,
+  Megaphone,
   Settings2,
   Tags,
   Globe,
@@ -59,6 +60,10 @@ export default function AppLayout() {
     { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/app/tasks', label: 'My Tasks', icon: ListChecks },
     { to: '/app/task-management', label: 'Task Management', icon: FolderTree },
+    // Announcements tab — visible to ALL roles. Admins/Super admins can Make
+    // Announcements; standard users read them. Not tasks, never counted in
+    // task totals anywhere.
+    { to: '/app/announcements', label: 'Announcements', icon: Megaphone },
     { to: '/app/resources', label: 'Resource Links', icon: Bookmark },
     ...(isAdminOrAbove
       ? [{ to: '/app/categories', label: 'Task Categories', icon: Tags }]

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -13,10 +13,13 @@ import {
   FolderOpen,
   Folder,
   ArrowLeft,
+  Megaphone,
   X,
 } from 'lucide-react';
 import { usePublicDashboard } from '../lib/usePublicDashboard';
 import type { AssignmentSlice } from '../lib/usePublicDashboard';
+import { useAnnouncements } from '../lib/useAnnouncements';
+import type { Announcement } from '../lib/useAnnouncements';
 import { resolveTaskStatus } from '../lib/recurrence';
 import { useAuth } from '../lib/useAuth';
 import { useSiteBranding } from '../lib/siteSettings';
@@ -44,6 +47,7 @@ type PubFilter = 'all' | 'pending' | 'completed' | 'overdue';
 export default function PublicDashboard() {
   const { branding } = useSiteBranding();
   const pub = usePublicDashboard();
+  const anns = useAnnouncements();
   const { profile, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
@@ -143,6 +147,9 @@ export default function PublicDashboard() {
           <div className="flex items-center gap-2">
             {/* NOTE: the manual Refresh button was removed — the board already
                 updates automatically via Supabase Realtime + a 60s poll. */}
+            {/* Announcements panel — sits to the LEFT of Sign Up / Sign In
+                (logged off) or Return (logged-in session). */}
+            <AnnouncementPanel announcements={anns.announcements} loading={anns.loading} />
             {/* Still signed in? Show a RETURN button instead of Sign Up / Sign
                 In — visiting this public board never logs anyone out, so the
                 button simply goes back to the logged-in session page. */}
@@ -182,6 +189,7 @@ export default function PublicDashboard() {
           </div>
         )}
 
+        
         {/* Summary strip — every card is a clickable status FILTER. */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
           <SummaryCard
@@ -241,6 +249,60 @@ export default function PublicDashboard() {
             </>
           )}
         </div>
+
+        {/* ═══ FILTERED ASSIGNMENTS — hidden by default; "View Tasks" toggles ═══ */}
+        <section className="mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700 border-l-4 border-blue-500 pl-3">
+              {filter === 'all'
+                ? `All task assignments (${filteredSlices.length})`
+                : `${STATUS_META[filter].label} assignments (${filteredSlices.length})`}
+            </h2>
+            {/* View Tasks button BESIDE the heading — shows/hides the list. */}
+            <button
+              type="button"
+              onClick={() => setTasksVisible((v) => !v)}
+              aria-expanded={tasksVisible}
+              title={tasksVisible ? 'Hide the task assignments list' : 'Show the task assignments list'}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold shadow-sm transition-colors"
+            >
+              {tasksVisible ? (
+                <>
+                  <X size={13} /> Hide Tasks
+                </>
+              ) : (
+                <>
+                  <FolderOpen size={13} /> View Tasks
+                </>
+              )}
+            </button>
+          </div>
+          {!tasksVisible ? (
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 py-6 text-center">
+              <p className="text-gray-500 font-medium text-sm">
+                Task assignments are hidden. Click “View Tasks” to show them.
+              </p>
+            </div>
+          ) : filteredSlices.length === 0 ? (
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 py-10 text-center">
+              <p className="text-gray-500 font-medium text-sm">
+                No {filter === 'all' ? '' : `${STATUS_META[filter].label.toLowerCase()} `}
+                assignments match this view.
+              </p>
+              {filtersActive && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Click the active card again or “Clear filter” to view all assignments.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredSlices.map((s) => (
+                <AssignmentRow key={`${s.task.id}-${s.user_id || 'unassigned'}`} slice={s} />
+              ))}
+            </div>
+          )}
+        </section>
 
         {/* ═══ FILTERED ASSIGNMENTS — hidden by default; "View Tasks" toggles ═══ */}
         <section className="mb-8">
