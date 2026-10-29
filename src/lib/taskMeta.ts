@@ -74,3 +74,19 @@ export function normalizeStoredStatus(status?: string | null): TaskStatus {
   if (status === 'completed') return 'completed';
   return 'pending'; // legacy 'in-progress' collapses into 'pending'
 }
+
+/**
+ * Effective status of a task right now — ALWAYS derived, never trusted from
+ * the raw stored column alone. Legacy rows saved as 'in-progress' (or with a
+ * stale/missing status) used to slip through every status-card filter because
+ * only 'pending' / 'completed' / 'overdue' were compared; they are collapsed
+ * to 'pending' here so Pending (and all other cards) count correctly.
+ */
+export function effectiveStatus(
+  task: { status?: string | null },
+  derived: 'completed' | 'pending' | 'overdue',
+): 'completed' | 'pending' | 'overdue' {
+  if (task.status === 'completed' || derived === 'completed') return 'completed';
+  if (derived === 'overdue') return 'overdue';
+  return 'pending';
+}

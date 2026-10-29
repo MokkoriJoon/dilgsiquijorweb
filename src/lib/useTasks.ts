@@ -226,9 +226,11 @@ export function useTasks(profile: Profile | null) {
   const statusOf = useCallback((t: Task) => resolveTaskStatus(t), []);
 
   // ---------- Per-assignee counting ----------
-  // When N users are assigned to ONE task, the dashboard cards count that
-  // task N times — once per assignee — and each assignment carries its own
-  // completion / pending / overdue state.
+  // When N users are assigned to ONE task, the ORGANIZATION cards (Task
+  // Management / public board) count that task N times — once per assignee —
+  // and each assignment carries its own completion / pending / overdue state.
+  // The PERSONAL views ("My Dashboard" / "My Tasks") keep counting MY slices
+  // only: a shared task counts as exactly 1 for me.
 
   /** All (task, user) assignment slices of a task list. */
   const slicesOf = useCallback(
@@ -246,6 +248,10 @@ export function useTasks(profile: Profile | null) {
           seen.add(a.user_id);
           out.push({ task: t, user_id: a.user_id, completed: !!a.completed });
         }
+        // Unassigned tasks still count as one task.
+        if (seen.size === 0) {
+          out.push({ task: t, user_id: '', completed: t.status === 'completed' });
+        }
       }
       return out;
     },
@@ -258,7 +264,10 @@ export function useTasks(profile: Profile | null) {
       const sl = slicesOf(list);
       return {
         total: sl.length,
-        completed: sl.filter((s) => s.completed).length,
+        completed: sl.filter((s) => s.completed || statusOf(s.task) === 'completed').length,
+        // PENDING is everything not certified and not overdue — including
+        // legacy statuses ('in-progress', stale values) which statusOf
+        // normalises to 'pending' so nothing slips through the cards.
         pending: sl.filter((s) => !s.completed && statusOf(s.task) === 'pending').length,
         overdue: sl.filter((s) => !s.completed && statusOf(s.task) === 'overdue').length,
       };
@@ -266,20 +275,25 @@ export function useTasks(profile: Profile | null) {
     [slicesOf, statusOf],
   );
 
+  /** Count a list of tasks ONCE EACH (personal view — my slice only). */
+  function countTasks(list: Task[]) {
+    return {
+      total: list.length,
+      completed: list.filter((t) => statusOf(t) === 'completed').length,
+      pending: list.filter((t) => statusOf(t) === 'pending').length,
+      overdue: list.filter((t) => statusOf(t) === 'overdue').length,
+    };
+  }
+
   const stats = useMemo(() => {
     return {
-      mine: countPerAssignee(assignedTasks),
+      // MY dashboard / MY tasks → count only my own slice (1 per task).
+      mine: countTasks(assignedTasks),
+      // Organization-wide (Task Management cards) → per-assignment counts.
       all: countPerAssignee(orgTasks),
-      personal: count(personalTasks),
+      personal: countTasks(personalTasks),
     };
-    function count(list: Task[]) {
-      return {
-        total: list.length,
-        completed: list.filter((t) => statusOf(t) === 'completed').length,
-        pending: list.filter((t) => statusOf(t) === 'pending').length,
-        overdue: list.filter((t) => statusOf(t) === 'overdue').length,
-      };
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignedTasks, orgTasks, personalTasks, statusOf, countPerAssignee]);
 
   // ---------- Mutations ----------
