@@ -10,6 +10,24 @@ body {
   overflow-wrap: break-word;
 }
 
+/* Safety net for mobile: absolutely-positioned dropdown panels (Notifications
+   bell, News panel…) are anchored to the RIGHT edge of their trigger. If any
+   ancestor introduced a horizontal overflow, right-anchored panels would be
+   pushed off-screen and clip. These rules guarantee every direct child of
+   <body> establishes a containing block for such panels, so `right-0` always
+   means "inside the visible viewport". */
+#root {
+  position: relative;
+}
+
+/* Long unbroken strings (URLs, emails, names) must wrap instead of expanding
+   the page beyond the device width. */
+p,
+span,
+li {
+  overflow-wrap: anywhere;
+}
+
 /* Fade-in used by the public-board announcement preview carousel whenever it
    auto-advances to the next notice. */
 @keyframes annFade {
