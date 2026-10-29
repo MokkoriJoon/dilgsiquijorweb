@@ -33,6 +33,9 @@ export interface Announcement {
   whereis?: string | null;
   why?: string | null;
   how?: string | null;
+  /** Visibility toggle — hidden announcements are kept (not deleted) but are
+   *  NOT shown on the public dashboard ticker / News panel. */
+  is_visible?: boolean;
 }
 
 /** The 5W1H extra fields (everything except WHAT = title/body). */
@@ -144,7 +147,9 @@ export function useAnnouncements() {
   }, [fetchData]);
 
   const create = useCallback(
-    async (input: { title: string; body: string; authorId: string | null } & AnnouncementDetails) => {
+    async (
+      input: { title: string; body: string; authorId: string | null; is_visible?: boolean } & AnnouncementDetails,
+    ) => {
       const { error: err } = await supabase.from('announcements').insert({
         title: input.title.trim(),
         // WHAT is required, but the message/5W1H parts are optional.
@@ -155,6 +160,7 @@ export function useAnnouncements() {
         whereis: input.whereis?.trim() || null,
         why: input.why?.trim() || null,
         how: input.how?.trim() || null,
+        is_visible: input.is_visible !== false,
       });
       if (err) return { error: err.message };
       await fetchData();
@@ -164,7 +170,10 @@ export function useAnnouncements() {
   );
 
   const update = useCallback(
-    async (id: string, input: { title: string; body: string } & AnnouncementDetails) => {
+    async (
+      id: string,
+      input: { title: string; body: string; is_visible?: boolean } & AnnouncementDetails,
+    ) => {
       const { error: err } = await supabase
         .from('announcements')
         .update({
@@ -176,6 +185,7 @@ export function useAnnouncements() {
           whereis: input.whereis?.trim() || null,
           why: input.why?.trim() || null,
           how: input.how?.trim() || null,
+          ...(input.is_visible === undefined ? {} : { is_visible: input.is_visible }),
         })
         .eq('id', id);
       if (err) return { error: err.message };
@@ -195,5 +205,23 @@ export function useAnnouncements() {
     [fetchData],
   );
 
-  return { announcements, loading, error, create, update, remove };
+  /** Show / hide an announcement WITHOUT deleting it. Hidden announcements
+   *  disappear from the public dashboard ticker & News panel but remain in
+   *  the Announcements page for admins (marked "Hidden"). */
+  const setVisible = useCallback(
+    async (id: string, visible: boolean) => {
+      const { error: err } = await supabase
+        .from('announcements')
+        .update({ is_visible: visible, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (err) return { error: err.message };
+      // Optimistically flip the local copy so the button reacts instantly.
+      setAnnouncements((prev) => prev.map((a) => (a.id === id ? { ...a, is_visible: visible } : a)));
+      await fetchData();
+      return {};
+    },
+    [fetchData],
+  );
+
+  return { announcements, loading, error, create, update, remove, setVisible };
 }

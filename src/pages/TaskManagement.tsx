@@ -31,15 +31,27 @@ export default function TaskManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   /** Folder Categories → clicking a category opens this view pre-filtered
-   *  via ?category=<id>&name=<display name>. */
+   *  via ?category=<id>&name=<display name>. The URL param is the single
+   *  source of truth so the "Filter by Task Category" dropdown and the folder
+   *  banner always stay in sync. */
   const categoryFilterId = searchParams.get('category');
   const categoryFilterName = searchParams.get('name') ?? 'this category';
 
-  function clearCategoryFilter() {
+  function setCategoryFilter(id: string) {
     const next = new URLSearchParams(searchParams);
-    next.delete('category');
-    next.delete('name');
+    if (!id) {
+      next.delete('category');
+      next.delete('name');
+    } else {
+      const cat = t.categories.find((c) => c.id === id);
+      next.set('category', id);
+      next.set('name', cat?.name ?? 'this category');
+    }
     setSearchParams(next, { replace: true });
+  }
+
+  function clearCategoryFilter() {
+    setCategoryFilter('');
   }
 
   const [filter, setFilter] = useState<StatFilter>('all');
@@ -93,6 +105,24 @@ export default function TaskManagement() {
     });
     return map;
   }, [t.orgTasks, t.statusOf, filter, freqs, categoryFilterId]);
+
+  /** Options for the "Filter by Task Category" dropdown — ALL categories that
+   *  exist now or may appear later: every organization category (present),
+   *  plus any category still attached to a stored task (upcoming/legacy), so
+   *  brand-new categories created anywhere show up automatically. Includes
+   *  the user's own personal categories and shows each one's task count. */
+  const categoryOptions = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string; color: string | null }>();
+    t.categories.forEach((c) => byId.set(c.id, { id: c.id, name: c.name, color: c.color }));
+    // Categories referenced by tasks but missing from the list (edge case).
+    t.tasks.forEach((x) => {
+      if (x.category_id && x.category?.name && !byId.has(x.category_id)) {
+        byId.set(x.category_id, { id: x.category_id, name: x.category.name, color: null });
+      }
+    });
+    const opts = Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return opts.map((o) => ({ ...o, count: t.tasks.filter((x) => x.category_id === o.id).length }));
+  }, [t.categories, t.tasks]);
 
   const filtersActive = filter !== 'all' || freqs.length > 0 || !!categoryFilterId;
 

@@ -331,6 +331,11 @@ ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS how     TEXT;
 ALTER TABLE public.announcements ALTER COLUMN body SET DEFAULT '';
 ALTER TABLE public.announcements ALTER COLUMN body DROP NOT NULL;
 
+-- Visibility toggle: admins can HIDE a finished announcement (instead of
+-- deleting it). Hidden announcements stay in the table but are not shown on
+-- the public dashboard ticker / News panel. Visible by default.
+ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS is_visible BOOLEAN NOT NULL DEFAULT true;
+
 ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Announcements publicly readable" ON public.announcements;
