@@ -3,6 +3,7 @@ import { useAuth } from '../lib/useAuth';
 import { supabase } from '../lib/supabase';
 import type { Profile, UserRole } from '../lib/types';
 import { USER_ROLES, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
+import { toTitleCase } from '../lib/case';
 import {
   Users,
   Plus,
@@ -15,6 +16,7 @@ import {
   CalendarDays,
   KeyRound,
   MailCheck,
+  MailWarning,
 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 
@@ -25,6 +27,7 @@ interface UserFormState {
   position: string;
   role: UserRole;
   password: string;
+  confirmPassword: string;
 }
 
 export default function UserManagement() {
@@ -42,6 +45,9 @@ export default function UserManagement() {
 
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /* Shown after a SUPER_ADMIN creates a user: tells them whether the new
+     account's email-confirmation link was actually delivered. */
+  const [confirmMailInfo, setConfirmMailInfo] = useState<{ sent: boolean; email: string } | null>(null);
   /* Content that belongs ONLY to the target and will be removed with the
      login (personal tasks / personal categories / bookmarks — STANDARD). */
   const [deleteImpact, setDeleteImpact] = useState<{ personalTasks: number; personalCategories: number; bookmarks: number } | null>(null);
@@ -188,18 +194,21 @@ export default function UserManagement() {
 
   function openCreate() {
     setFormError('');
+    setConfirmMailInfo(null);
     setForm({
       full_name: '',
       email: '',
       position: '',
       role: 'STANDARD',
       password: '',
+      confirmPassword: '',
     });
     setShowModal(true);
   }
 
   function openEdit(user: Profile) {
     setFormError('');
+    setConfirmMailInfo(null);
     setForm({
       id: user.id,
       full_name: user.full_name ?? '',
@@ -207,6 +216,7 @@ export default function UserManagement() {
       position: user.position ?? '',
       role: user.role,
       password: '',
+      confirmPassword: '',
     });
     setShowModal(true);
   }
@@ -215,11 +225,19 @@ export default function UserManagement() {
     if (!form || !profile) return;
     setFormError('');
 
-    if (!form.full_name.trim()) return setFormError('Full name is required.');
+    // Names / positions are stored with an Uppercase First Letter.
+    const cleanName = toTitleCase(form.full_name);
+    const cleanPosition = toTitleCase(form.position);
+
+    if (!cleanName) return setFormError('Full name is required.');
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       return setFormError('A valid email is required.');
-    if (!form.id && form.password.length < 8)
-      return setFormError('Password must be at least 8 characters.');
+    if (!form.id) {
+      if (form.password.length < 8)
+        return setFormError('Password must be at least 8 characters.');
+      if (form.password !== form.confirmPassword)
+        return setFormError('Password and Confirm Password do not match.');
+    }
 
     setSaving(true);
     let err: string | null = null;
@@ -229,34 +247,45 @@ export default function UserManagement() {
       const { error } = await supabase
         .from('profiles')
         .update({
-          full_name: form.full_name.trim(),
+          full_name: cleanName,
           email: form.email.trim().toLowerCase(),
-          position: form.position.trim() || null,
+          position: cleanPosition || null,
           role: form.role,
           updated_at: new Date().toISOString(),
         })
         .eq('id', form.id);
       err = error?.message ?? null;
     } else {
-      // Create auth user + profile via SECURITY DEFINER RPC
-      const { error: rpcErr } = await supabase.rpc('admin_create_user', {
+      // Create auth user + profile via SECURITY DEFINER RPC.
+      // The account is created UNCONFIRMED and Supabase emails the new user a
+      // confirmation link (SMTP "Confirm your email" template) automatically.
+      const { data, error: rpcErr } = await supabase.rpc<{
+        user_id: string;
+        email: string;
+        confirmation_sent: boolean;
+      }>('admin_create_user', {
         p_email: form.email.trim().toLowerCase(),
         p_password: form.password,
-        p_full_name: form.full_name.trim(),
-        p_position: form.position.trim() || null,
+        p_full_name: cleanName,
+        p_position: cleanPosition || null,
         p_role: form.role,
       });
-      // Friendly message for the most common DB errors
       if (rpcErr) {
         const m = rpcErr.message ?? '';
-        if (/gen_salt|crypt|pgcrypto/i.test(m)) {
-          err =
-            'Database is missing the pgcrypto extension. Open Supabase → SQL Editor and run supabase/schema.sql once (it installs pgcrypto and recreates admin_create_user).';
-        } else if (/duplicate key/i.test(m)) {
+        if (/already registered|duplicate key/i.test(m)) {
           err = 'That email is already registered.';
+        } else if (
+          /SMTP|mailer|not configured|send.*email|confirmation email/i.test(m)
+        ) {
+          err = `${m} — Ask an administrator to enable SMTP in Supabase → Authentication → Providers → Email (SMTP settings), then try again.`;
+        } else if (/does not exist|function|schema cache|search_path/i.test(m)) {
+          err =
+            'The admin_create_user function is missing or outdated. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7 installs pgcrypto and recreates admin_create_user with email confirmation), then try again.';
         } else {
           err = m;
         }
+      } else if (data) {
+        setConfirmMailInfo({ sent: !!data.confirmation_sent, email: data.email });
       }
     }
 
@@ -268,6 +297,32 @@ export default function UserManagement() {
     setShowModal(false);
     setForm(null);
     loadUsers();
+  }
+
+  /** Re-send the account-confirmation email to a user whose mailbox never got it. */
+  async function resendConfirmation(user: Profile) {
+    setPageError('');
+    if (!user.email) {
+      setPageError('This user has no email on file, so a confirmation email cannot be sent.');
+      return;
+    }
+    try {
+      const { error } = await supabase.rpc('admin_send_confirmation_email', {
+        p_email: user.email.toLowerCase(),
+      });
+      if (error) {
+        const m = error.message ?? '';
+        setPageError(
+          /does not exist|function|schema cache/i.test(m)
+            ? 'The admin_send_confirmation_email function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7d), then try again.'
+            : m,
+        );
+        return;
+      }
+      setConfirmMailInfo({ sent: true, email: user.email });
+    } catch {
+      setPageError('Failed to send the confirmation email. Please try again.');
+    }
   }
 
   async function confirmDelete() {
@@ -340,6 +395,45 @@ export default function UserManagement() {
         </div>
       )}
 
+      {confirmMailInfo && (
+        <div
+          className={`rounded-lg p-3 mb-4 flex items-start justify-between gap-2 border ${
+            confirmMailInfo.sent
+              ? 'bg-green-50 border-green-200'
+              : 'bg-amber-50 border-amber-200'
+          }`}
+        >
+          <p className={`text-sm ${confirmMailInfo.sent ? 'text-green-700' : 'text-amber-700'}`}>
+            {confirmMailInfo.sent ? (
+              <>
+                ✓ Account created for{' '}
+                <span className="font-semibold">{confirmMailInfo.email}</span>. A{' '}
+                <span className="font-medium">confirmation email</span> was sent to that
+                inbox — the user must click it to activate the account before signing in.
+              </>
+            ) : (
+              <>
+                <MailWarning size={14} className="inline -mt-0.5 mr-1" />
+                Account created, but the confirmation email could not be delivered (SMTP
+                may not be configured). Set up SMTP in Supabase → Authentication →
+                Providers → Email, then use the “Send confirmation email” action on the
+                user&apos;s row ({confirmMailInfo.email}).
+              </>
+            )}
+          </p>
+          <button
+            onClick={() => setConfirmMailInfo(null)}
+            className={
+              confirmMailInfo.sent
+                ? 'text-green-400 hover:text-green-600'
+                : 'text-amber-400 hover:text-amber-600'
+            }
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Search */}
       <div className="relative mb-4 max-w-md">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -391,7 +485,7 @@ export default function UserManagement() {
                         </div>
                         <div className="min-w-0">
                           <p className="font-medium text-gray-800 truncate">
-                            {user.full_name ?? '—'}
+                            {toTitleCase(user.full_name ?? '') || '—'}
                             {user.id === profile.id && (
                               <span className="ml-2 text-[10px] text-blue-600 font-semibold">
                                 (You)
@@ -402,7 +496,9 @@ export default function UserManagement() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-4 text-gray-600">{user.position ?? '—'}</td>
+                    <td className="px-5 py-4 text-gray-600">
+                      {user.position ? toTitleCase(user.position) : '—'}
+                    </td>
                     <td className="px-5 py-4">
                       <span
                         className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[user.role]}`}
@@ -415,6 +511,14 @@ export default function UserManagement() {
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => resendConfirmation(user)}
+                          disabled={!user.email}
+                          title="Send the account-confirmation email to this user"
+                          className="p-2 rounded-lg text-green-600 hover:bg-green-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <MailCheck size={15} />
+                        </button>
                         <button
                           onClick={() => openResetPassword(user)}
                           title="Forgot / change this user's password"
@@ -538,17 +642,42 @@ export default function UserManagement() {
                 </p>
               </div>
               {!form.id && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Temporary Password *
-                  </label>
-                  <PasswordInput
-                    value={form.password}
-                    onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    placeholder="Minimum 8 characters"
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm pr-10"
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Password *
+                    </label>
+                    <PasswordInput
+                      value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                      placeholder="Minimum 8 characters"
+                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm pr-10"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Confirm Password *
+                    </label>
+                    <PasswordInput
+                      value={form.confirmPassword}
+                      onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
+                      placeholder="Re-enter the password"
+                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm pr-10"
+                    />
+                    {form.confirmPassword && form.password !== form.confirmPassword && (
+                      <p className="text-red-500 text-xs mt-1">Passwords do not match</p>
+                    )}
+                    {form.confirmPassword && form.password === form.confirmPassword && (
+                      <p className="text-green-600 text-xs mt-1">✓ Passwords match</p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      The new account is created UNCONFIRMED — Supabase automatically
+                      emails the address above a confirmation link. The user clicks it to
+                      activate the account, then signs in with this password. (Requires
+                      SMTP enabled in Supabase → Authentication → Email.)
+                    </p>
+                  </div>
+                </>
               )}
             </div>
 
