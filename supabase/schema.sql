@@ -11,7 +11,7 @@
 -- =====================================================================
 
 -- 0) REQUIRED EXTENSION — provides crypt() / gen_salt('bf') used by
---    admin_set_user_password() below. Supabase installs it in the extensions
+--    admin_create_user() below. Supabase installs it in the extensions
 --    schema; we also expose it in public so search_path always finds it.
 -- Prefer the built-in schema; fall back to public if it does not exist.
 DO $$
@@ -23,7 +23,7 @@ BEGIN
   END IF;
 END $$;
 
--- The password RPC pins search_path = public, so make sure gen_salt/crypt are
+-- The RPC below pins search_path = public, so make sure gen_salt/crypt are
 -- reachable from public as well (thin wrappers around the extension schema).
 DO $$
 DECLARE ext_schema TEXT;
@@ -412,8 +412,7 @@ END $$;
 
 -- 3) AUTO-CREATE A PROFILE WHEN A USER REGISTERS
 --    The FIRST user to register automatically becomes SUPER_ADMIN.
---    Every subsequent user starts as STANDARD. A SUPER_ADMIN can change the
---    role after registration; client-supplied metadata is never trusted.
+--    Every subsequent user gets the role sent by the client (default STANDARD).
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -429,7 +428,7 @@ BEGIN
   IF NOT v_has_users THEN
     v_role := 'SUPER_ADMIN';           -- first registered user wins the crown
   ELSE
-    v_role := 'STANDARD';
+    v_role := COALESCE(NEW.raw_user_meta_data ->> 'role', 'STANDARD');
   END IF;
 
   IF v_role NOT IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN') THEN
@@ -453,29 +452,6 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
--- Keep the public profile email synchronized only when Supabase Auth commits
--- an email change (after its verification link has been confirmed).
-CREATE OR REPLACE FUNCTION public.sync_profile_email()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public
-AS $$
-BEGIN
-  IF NEW.email IS DISTINCT FROM OLD.email THEN
-    UPDATE public.profiles
-       SET email = lower(NEW.email),
-           updated_at = NOW()
-     WHERE id = NEW.id;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS on_auth_user_email_updated ON auth.users;
-CREATE TRIGGER on_auth_user_email_updated
-  AFTER UPDATE OF email ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.sync_profile_email();
 
 -- Helper: current user's role
 CREATE OR REPLACE FUNCTION public.get_current_role()
@@ -571,9 +547,11 @@ CREATE POLICY "Owners delete own personal tasks"
 -- DELETE FROM public.profiles;    -- safety net for orphaned profile rows
 -- DELETE FROM public.tasks;       -- safety net for orphaned task rows
 
--- 7) Remove the legacy account-creation RPC. Creating auth.users rows directly
---    bypasses Supabase's confirmation-email flow; the app now uses auth.signUp
---    with an isolated client, then updates the STANDARD profile as SUPER_ADMIN.
+-- 7) SECURITY DEFINER RPC: allow a SUPER_ADMIN to create new users from the app
+--    (bypasses the need for service-role keys on the client).
+--    Drop first so the parameter rename (p_office -> p_position) applies cleanly.
+-- Drop every historical variant. Postgres identifies functions by argument
+-- TYPES only, so we drop all 4/5-argument text variants that may exist.
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -585,7 +563,63 @@ BEGIN
     EXECUTE format('DROP FUNCTION IF EXISTS %s', r.sig);
   END LOOP;
 END $$;
--- 7a) SECURITY DEFINER RPC: allow a SUPER_ADMIN to set (change/reset) another
+CREATE OR REPLACE FUNCTION public.admin_create_user(
+  p_email TEXT,
+  p_password TEXT,
+  p_full_name TEXT,
+  p_position TEXT,
+  p_role TEXT DEFAULT 'STANDARD'
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_role TEXT;
+  v_user_id     UUID;
+BEGIN
+  SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' THEN
+    RAISE EXCEPTION 'Only SUPER_ADMIN can create users';
+  END IF;
+
+  IF p_role NOT IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN') THEN
+    RAISE EXCEPTION 'Invalid role';
+  END IF;
+
+  IF length(coalesce(p_password, '')) < 8 THEN
+    RAISE EXCEPTION 'Password must be at least 8 characters';
+  END IF;
+
+  v_user_id := gen_random_uuid();
+
+  INSERT INTO auth.users (
+    instance_id, id, aud, role, email, encrypted_password,
+    email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+    created_at, updated_at,
+    confirmation_token, email_change, email_change_token_new, recovery_token
+  ) VALUES (
+    'production', v_user_id, 'authenticated', 'authenticated',
+    lower(btrim(p_email)),
+    public.crypt(p_password, public.gen_salt('bf')),
+    NOW(),
+    '{"provider":"email","providers":["email"]}',
+    jsonb_build_object('full_name', p_full_name, 'position', p_position),
+    NOW(), NOW(), '', '', '', ''
+  );
+
+  INSERT INTO public.profiles (id, full_name, email, position, role)
+  VALUES (v_user_id, p_full_name, lower(btrim(p_email)), p_position, p_role)
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        position  = EXCLUDED.position,
+        role      = EXCLUDED.role;
+
+  RETURN v_user_id;
+END $$;
+
+-- 7b) SECURITY DEFINER RPC: allow a SUPER_ADMIN to set (change/reset) another
 --     user's password directly from User Management (key icon). The client
 --     never touches auth.users — this function does, after verifying the
 --     caller is a SUPER_ADMIN.
@@ -620,7 +654,7 @@ BEGIN
    WHERE id = p_user_id;
 END $$;
 
--- 7b) SECURITY DEFINER RPC: SUPER_ADMIN deletes a user's LOGIN completely.
+-- 7c) SECURITY DEFINER RPC: SUPER_ADMIN deletes a user's LOGIN completely.
 --     • The auth account (auth.users) is removed — the user can no longer
 --       sign in at all. The profiles row disappears via ON DELETE CASCADE.
 --     • Everything the user MADE / UPLOADED / EDITED on the website —
