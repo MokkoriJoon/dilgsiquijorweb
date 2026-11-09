@@ -48,9 +48,13 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   position TEXT,   -- Position / Designation (formerly "office")
   role TEXT NOT NULL DEFAULT 'STANDARD'
     CHECK (role IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN')),
+  is_approved BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- Migration: rename the legacy "office" column to "position" (safe to re-run).
 DO $$
@@ -411,8 +415,8 @@ BEGIN
 END $$;
 
 -- 3) AUTO-CREATE A PROFILE WHEN A USER REGISTERS
---    The FIRST user to register automatically becomes SUPER_ADMIN.
---    Every subsequent user gets the role sent by the client (default STANDARD).
+--    The FIRST user to register automatically becomes an approved SUPER_ADMIN.
+--    Every later public signup starts as an unapproved STANDARD account.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -421,27 +425,32 @@ AS $$
 DECLARE
   v_has_users BOOLEAN;
   v_role      TEXT;
+  v_is_approved BOOLEAN;
 BEGIN
   -- Is there already at least one profile in the system?
   SELECT EXISTS (SELECT 1 FROM public.profiles LIMIT 1) INTO v_has_users;
 
   IF NOT v_has_users THEN
-    v_role := 'SUPER_ADMIN';           -- first registered user wins the crown
+    v_role := 'SUPER_ADMIN';
+    v_is_approved := TRUE;
   ELSE
-    v_role := COALESCE(NEW.raw_user_meta_data ->> 'role', 'STANDARD');
+    -- Public signup metadata is untrusted; only a Super Admin may assign roles.
+    v_role := 'STANDARD';
+    v_is_approved := FALSE;
   END IF;
 
   IF v_role NOT IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN') THEN
     v_role := 'STANDARD';
   END IF;
 
-  INSERT INTO public.profiles (id, full_name, email, position, role)
+  INSERT INTO public.profiles (id, full_name, email, position, role, is_approved)
   VALUES (
     NEW.id,
     NEW.raw_user_meta_data ->> 'full_name',
     NEW.email,
     NEW.raw_user_meta_data ->> 'position',
-    v_role
+    v_role,
+    v_is_approved
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
@@ -461,7 +470,20 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT role FROM public.profiles WHERE id = auth.uid();
+  SELECT role FROM public.profiles WHERE id = auth.uid() AND is_approved;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_user_approved()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    (SELECT is_approved FROM public.profiles WHERE id = auth.uid()),
+    FALSE
+  );
 $$;
 
 -- 4) RLS POLICIES — PROFILES
@@ -472,7 +494,11 @@ DROP POLICY IF EXISTS "Profiles publicly readable" ON public.profiles;
 CREATE POLICY "Profiles publicly readable"
   ON public.profiles FOR SELECT
   TO public
-  USING (true);
+  USING (
+    is_approved
+    OR id = auth.uid()
+    OR public.get_current_role() = 'SUPER_ADMIN'
+  );
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile"
@@ -483,6 +509,7 @@ CREATE POLICY "Users can update own profile"
     id = auth.uid()
     -- a regular user must never be able to escalate their own role
     AND role = public.get_current_role()
+    AND is_approved = TRUE
   );
 
 DROP POLICY IF EXISTS "Super admins manage all profiles" ON public.profiles;
@@ -491,6 +518,30 @@ CREATE POLICY "Super admins manage all profiles"
   TO authenticated
   USING (public.get_current_role() = 'SUPER_ADMIN')
   WITH CHECK (public.get_current_role() = 'SUPER_ADMIN');
+
+-- A pending account can authenticate, but RLS denies all application data
+-- until an approved Super Admin changes profiles.is_approved to TRUE.
+DO $$
+DECLARE
+  v_table TEXT;
+BEGIN
+  FOREACH v_table IN ARRAY ARRAY[
+    'tasks',
+    'task_categories',
+    'task_links',
+    'task_assignments',
+    'bookmarks',
+    'site_settings',
+    'announcements'
+  ]
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Approved accounts only" ON public.%I', v_table);
+    EXECUTE format(
+      'CREATE POLICY "Approved accounts only" ON public.%I AS RESTRICTIVE FOR ALL TO authenticated USING (public.is_user_approved()) WITH CHECK (public.is_user_approved())',
+      v_table
+    );
+  END LOOP;
+END $$;
 
 -- 5) RLS POLICIES — TASKS
 -- NOTE: tasks are readable by EVERYONE (anon included):
@@ -579,7 +630,7 @@ DECLARE
   v_caller_role TEXT;
   v_user_id     UUID;
 BEGIN
-  SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  v_caller_role := public.get_current_role();
   IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' THEN
     RAISE EXCEPTION 'Only SUPER_ADMIN can create users';
   END IF;
@@ -609,12 +660,13 @@ BEGIN
     NOW(), NOW(), '', '', '', ''
   );
 
-  INSERT INTO public.profiles (id, full_name, email, position, role)
-  VALUES (v_user_id, p_full_name, lower(btrim(p_email)), p_position, p_role)
+  INSERT INTO public.profiles (id, full_name, email, position, role, is_approved)
+  VALUES (v_user_id, p_full_name, lower(btrim(p_email)), p_position, p_role, FALSE)
   ON CONFLICT (id) DO UPDATE
     SET full_name = EXCLUDED.full_name,
         position  = EXCLUDED.position,
-        role      = EXCLUDED.role;
+        role      = EXCLUDED.role,
+        is_approved = FALSE;
 
   RETURN v_user_id;
 END $$;
@@ -635,7 +687,7 @@ AS $$
 DECLARE
   v_caller_role TEXT;
 BEGIN
-  SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  v_caller_role := public.get_current_role();
   IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' THEN
     RAISE EXCEPTION 'Only SUPER_ADMIN can change user passwords';
   END IF;
@@ -674,7 +726,7 @@ DECLARE
   v_caller_role TEXT;
   v_target_role TEXT;
 BEGIN
-  SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  v_caller_role := public.get_current_role();
   IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' THEN
     RAISE EXCEPTION 'Only SUPER_ADMIN can delete users';
   END IF;
@@ -736,16 +788,32 @@ CREATE POLICY "Avatars are publicly readable"
 DROP POLICY IF EXISTS "Users upload own avatar" ON storage.objects;
 CREATE POLICY "Users upload own avatar"
   ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text);
+  WITH CHECK (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+    AND public.is_user_approved()
+  );
 
 -- Update = delete + re-insert (upsert), so both must be allowed for the owner.
 DROP POLICY IF EXISTS "Users replace own avatar" ON storage.objects;
 CREATE POLICY "Users replace own avatar"
   ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text)
-  WITH CHECK (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text);
+  USING (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+    AND public.is_user_approved()
+  )
+  WITH CHECK (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+    AND public.is_user_approved()
+  );
 
 DROP POLICY IF EXISTS "Users delete own avatar" ON storage.objects;
 CREATE POLICY "Users delete own avatar"
   ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text);
+  USING (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+    AND public.is_user_approved()
+  );

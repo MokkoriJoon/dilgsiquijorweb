@@ -17,7 +17,8 @@ import {
   CalendarDays,
   KeyRound,
   MailCheck,
-  MailWarning,
+  UserCheck,
+  Clock3,
 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 
@@ -46,9 +47,8 @@ export default function UserManagement() {
 
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleting, setDeleting] = useState(false);
-  /* The admin_create_user RPC marks administrator-created accounts confirmed
-     without sending an email. */
-  const [confirmMailInfo, setConfirmMailInfo] = useState<{ sent: boolean; email: string } | null>(null);
+  const [confirmMailInfo, setConfirmMailInfo] = useState<{ email: string } | null>(null);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
   /* Content that belongs ONLY to the target and will be removed with the
      login (personal tasks / personal categories / bookmarks — STANDARD). */
   const [deleteImpact, setDeleteImpact] = useState<{ personalTasks: number; personalCategories: number; bookmarks: number } | null>(null);
@@ -132,7 +132,7 @@ export default function UserManagement() {
         const m = error.message ?? '';
         setPwError(
           /admin_set_user_password|does not exist|function/i.test(m)
-            ? 'The admin_set_user_password function is missing. Open Supabase → SQL Editor and run the function block from supabase/schema.sql once.'
+            ? 'The admin_set_user_password function is missing. Open Supabase → SQL Editor and run supabase/user_approval_migration.sql once.'
             : m,
         );
       } else {
@@ -222,6 +222,34 @@ export default function UserManagement() {
     setShowModal(true);
   }
 
+  async function toggleApproval(user: Profile) {
+    if (user.id === profile?.id || approvalBusyId) return;
+    setPageError('');
+    setApprovalBusyId(user.id);
+    const nextApproval = !user.is_approved;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ is_approved: nextApproval, updated_at: new Date().toISOString() })
+        .eq('id', user.id)
+        .select('id')
+        .maybeSingle();
+      if (error || !data) {
+        setPageError(error?.message ?? 'No user account was updated.');
+        return;
+      }
+      setUsers((current) =>
+        current.map((item) =>
+          item.id === user.id ? { ...item, is_approved: nextApproval } : item,
+        ),
+      );
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Could not update account approval.');
+    } finally {
+      setApprovalBusyId(null);
+    }
+  }
+
   async function handleSave() {
     if (!form || !profile) return;
     setFormError('');
@@ -273,21 +301,21 @@ export default function UserManagement() {
           err = 'That email is already registered.';
         } else if (/invalid input syntax for type uuid.*production/i.test(m)) {
           err =
-            'The database still has the old admin_create_user function. In Supabase → SQL Editor, run supabase/fix_admin_create_user_uuid.sql, then try again.';
+            'The database still has an outdated admin_create_user function. In Supabase → SQL Editor, run supabase/user_approval_migration.sql, then try again.';
         } else if (rateLimitError) {
           err = rateLimitError;
         } else if (
           /SMTP|mailer|not configured|send.*email|confirmation email/i.test(m)
         ) {
-          err = `${m} — Ask an administrator to enable SMTP in Supabase → Authentication → Providers → Email (SMTP settings), then try again.`;
+          err = `${m} — The admin_create_user function should create accounts without sending email. Run supabase/user_approval_migration.sql in Supabase → SQL Editor, then try again.`;
         } else if (/does not exist|function|schema cache|search_path/i.test(m)) {
           err =
-            'The admin_create_user function is missing or outdated. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7 installs pgcrypto and recreates admin_create_user with email confirmation), then try again.';
+            'The admin_create_user function is missing or outdated. Open Supabase → SQL Editor and run supabase/user_approval_migration.sql, then try again.';
         } else {
           err = m;
         }
       } else if (data) {
-        setConfirmMailInfo({ sent: false, email: form.email.trim().toLowerCase() });
+        setConfirmMailInfo({ email: form.email.trim().toLowerCase() });
       } else {
         err = 'Supabase did not return a user ID, so the account could not be confirmed as created.';
       }
@@ -301,29 +329,6 @@ export default function UserManagement() {
     setShowModal(false);
     setForm(null);
     loadUsers();
-  }
-
-  /** Re-send the account-confirmation email to a user whose mailbox never got it. */
-  async function resendConfirmation(user: Profile) {
-    setPageError('');
-    if (!user.email) {
-      setPageError('This user has no email on file, so a confirmation email cannot be sent.');
-      return;
-    }
-    try {
-      const { error } = await supabase.auth.resend({
-        type: 'signup',
-        email: user.email.toLowerCase(),
-      });
-      if (error) {
-        const m = error.message ?? '';
-        setPageError(emailRateLimitMessage(m) ?? m);
-        return;
-      }
-      setConfirmMailInfo({ sent: true, email: user.email });
-    } catch {
-      setPageError('Failed to send the confirmation email. Please try again.');
-    }
   }
 
   async function confirmDelete() {
@@ -342,7 +347,7 @@ export default function UserManagement() {
       const m = error.message ?? '';
       setPageError(
         /admin_delete_user|does not exist|function|schema cache/i.test(m)
-          ? 'The admin_delete_user function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7c), then try again.'
+          ? 'The admin_delete_user function is missing. Open Supabase → SQL Editor and run supabase/user_approval_migration.sql once, then try again.'
           : m,
       );
       return;
@@ -397,37 +402,14 @@ export default function UserManagement() {
       )}
 
       {confirmMailInfo && (
-        <div
-          className={`rounded-lg p-3 mb-4 flex items-start justify-between gap-2 border ${
-            confirmMailInfo.sent
-              ? 'bg-green-50 border-green-200'
-              : 'bg-amber-50 border-amber-200'
-          }`}
-        >
-          <p className={`text-sm ${confirmMailInfo.sent ? 'text-green-700' : 'text-amber-700'}`}>
-            {confirmMailInfo.sent ? (
-              <>
-                ✓ Account created for{' '}
-                <span className="font-semibold">{confirmMailInfo.email}</span>. A{' '}
-                <span className="font-medium">confirmation email</span> was sent to that
-                inbox — the user must click it to activate the account before signing in.
-              </>
-            ) : (
-              <>
-                <MailWarning size={14} className="inline -mt-0.5 mr-1" />
-                Account created for <span className="font-semibold">{confirmMailInfo.email}</span>.
-                This Super Admin action marks the account confirmed and does not send an
-                email. Share its sign-in details securely with the user.
-              </>
-            )}
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 mb-4 flex items-start justify-between gap-2">
+          <p className="text-sm text-amber-800">
+            Account created for <span className="font-semibold">{confirmMailInfo.email}</span>.
+            It is pending approval; approve it from this list when it is ready to access the website.
           </p>
           <button
             onClick={() => setConfirmMailInfo(null)}
-            className={
-              confirmMailInfo.sent
-                ? 'text-green-400 hover:text-green-600'
-                : 'text-amber-400 hover:text-amber-600'
-            }
+            className="text-amber-400 hover:text-amber-600"
           >
             <X size={16} />
           </button>
@@ -465,6 +447,7 @@ export default function UserManagement() {
                   <th className="px-5 py-3 font-semibold">User</th>
                   <th className="px-5 py-3 font-semibold">Position</th>
                   <th className="px-5 py-3 font-semibold">Role</th>
+                  <th className="px-5 py-3 font-semibold">Account</th>
                   <th className="px-5 py-3 font-semibold">Open Tasks</th>
                   <th className="px-5 py-3 font-semibold text-right">Actions</th>
                 </tr>
@@ -506,18 +489,46 @@ export default function UserManagement() {
                         {ROLE_LABELS[user.role]}
                       </span>
                     </td>
+                    <td className="px-5 py-4">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                          user.is_approved
+                            ? 'border-green-200 bg-green-50 text-green-700'
+                            : 'border-amber-200 bg-amber-50 text-amber-700'
+                        }`}
+                      >
+                        {user.is_approved ? <UserCheck size={12} /> : <Clock3 size={12} />}
+                        {user.is_approved ? 'Approved' : 'Pending'}
+                      </span>
+                    </td>
                     <td className="px-5 py-4 text-gray-600">
                       {taskCounts[user.id] ?? 0}
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => resendConfirmation(user)}
-                          disabled={!user.email}
-                          title="Send the account-confirmation email to this user"
-                          className="p-2 rounded-lg text-green-600 hover:bg-green-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                          onClick={() => toggleApproval(user)}
+                          disabled={user.id === profile.id || approvalBusyId !== null}
+                          title={
+                            user.id === profile.id
+                              ? 'You cannot change your own approval'
+                              : user.is_approved
+                                ? 'Revoke website access'
+                                : 'Approve account and allow website access'
+                          }
+                          className={`p-2 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                            user.is_approved
+                              ? 'text-amber-600 hover:bg-amber-50'
+                              : 'text-green-600 hover:bg-green-50'
+                          }`}
                         >
-                          <MailCheck size={15} />
+                          {approvalBusyId === user.id ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : user.is_approved ? (
+                            <Clock3 size={15} />
+                          ) : (
+                            <UserCheck size={15} />
+                          )}
                         </button>
                         <button
                           onClick={() => openResetPassword(user)}
@@ -671,10 +682,8 @@ export default function UserManagement() {
                       <p className="text-green-600 text-xs mt-1">✓ Passwords match</p>
                     )}
                     <p className="text-xs text-gray-400 mt-1">
-                      The new account is created UNCONFIRMED — Supabase automatically
-                      emails the address above a confirmation link. The user clicks it to
-                      activate the account, then signs in with this password. (Requires
-                      SMTP enabled in Supabase → Authentication → Email.)
+                      No email is sent. The account stays pending until a Super Admin
+                      approves it in User Management. The user can sign in after approval.
                     </p>
                   </div>
                 </>

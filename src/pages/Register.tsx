@@ -18,6 +18,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [authConfirmationRequired, setAuthConfirmationRequired] = useState(false);
 
   const validateEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -98,10 +99,8 @@ export default function Register() {
       }
 
       if (data.user) {
+        setAuthConfirmationRequired(!data.user.email_confirmed_at);
         setSuccess(true);
-        setTimeout(() => {
-          navigate('/login');
-        }, 3000);
       }
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');
@@ -144,11 +143,17 @@ export default function Register() {
             {success && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
                 <p className="text-green-700 text-sm font-medium">
-                  ✓ Registration successful! Please check your email to confirm your account.
+                  {authConfirmationRequired
+                    ? 'Account created, but Supabase email confirmation is still enabled. Ask the administrator to turn it off and confirm this existing account in Supabase Auth.'
+                    : '✓ Account created. A Super Admin must approve it before you can use the website.'}
                 </p>
-                <p className="text-green-600 text-xs mt-1">
-                  Redirecting to login page...
-                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/login')}
+                  className="mt-3 text-sm font-medium text-green-800 underline"
+                >
+                  Go to sign in
+                </button>
               </div>
             )}
 

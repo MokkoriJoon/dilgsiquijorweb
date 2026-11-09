@@ -65,6 +65,41 @@ export default function AppLayout() {
     return null;
   }
 
+  if (!profile.is_approved) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+            <Users size={26} />
+          </div>
+          <h1 className="text-xl font-bold text-gray-800">Account pending approval</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            Your account was created without an email verification step. A Super Admin
+            must approve it before you can use the website. You can sign in again after
+            approval.
+          </p>
+          <div className="mt-6 flex justify-center gap-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Check approval
+            </button>
+            <button
+              onClick={async () => {
+                await supabase.auth.signOut();
+                navigate('/login', { replace: true });
+              }}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800"
+            >
+              <LogOut size={15} /> Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const role = profile.role;
   const isAdminOrAbove = role === 'ADMIN' || role === 'SUPER_ADMIN';
   const menuItems = [
