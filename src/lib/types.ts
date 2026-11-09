@@ -24,6 +24,8 @@ export interface Profile {
   /** Position / Designation of the staff member (formerly "Office / Department"). */
   position: string | null;
   role: UserRole;
+  /** New accounts remain blocked from the app until a Super Admin approves them. */
+  is_approved: boolean;
   /** Public URL of the avatar stored in the Supabase Storage bucket ("avatars"). */
   avatar_url?: string | null;
   created_at?: string;

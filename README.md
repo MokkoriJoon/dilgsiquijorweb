@@ -57,86 +57,54 @@ npm run dev
 
 ## Supabase Setup
 
-### Fix signup email rate limits
+### Disable signup email confirmation and require Super Admin approval
 
-The application cannot override Supabase Auth's email-sending limit. Supabase's
-built-in email sender is intended for testing: it allows **2 emails per hour
-per project** and only sends to addresses belonging to the Supabase
-organization team. Use custom SMTP to send confirmation emails to staff:
+This mode sends no signup or confirmation emails. Supabase Auth creates the
+account, then the app holds it at a pending-approval screen until a Super Admin
+approves it in User Management. A pending user may authenticate, but cannot use
+the app's protected features until approved. Existing profiles remain approved;
+only new public signups and Admin-created accounts start pending.
 
-1. **Stop repeated signup attempts.** Wait for the current email quota to refill.
-   In Supabase, open **Authentication → Users** and check whether the address
-   already has an account before trying again.
-2. **Choose an SMTP provider** (for example, Resend or Brevo) and verify a sender
-   domain/address there. Add the provider's recommended SPF/DKIM DNS records.
-3. In the Supabase dashboard, open **Project Settings → Authentication → SMTP
-   Settings** (or **Authentication → SMTP Settings**), enable custom SMTP, and
-   enter the SMTP host, port, username, password, and verified sender address.
-   Keep the SMTP password private; do not put it in this repository or in
-   `VITE_*` browser environment variables.
-4. Open **Authentication → Rate Limits**. Review the project email-send limit
-   and set it to a value supported by your SMTP provider. Start conservatively;
-   the default email-sender limit is not increased just by changing app code.
-5. In **Authentication → URL Configuration**, set the app's site URL and add
-   its sign-in/confirmation URL to the redirect allow list. Save the settings.
-6. Submit signup once with an email address you control and check its inbox and
-   spam folder. Avoid repeatedly clicking signup or resend; these endpoints
-   have per-address limits too.
+1. In Supabase, open **Authentication → Sign In / Providers → Email** (the
+   exact label may appear as **Authentication → Providers → Email**).
+2. Turn **Confirm email** off and save. This is a Supabase project setting; a
+   website deployment or SQL migration cannot turn it off. Keep the Email
+   provider enabled so users can still sign in with email and password.
+3. Open **Supabase → SQL Editor** and run `supabase/user_approval_migration.sql`
+   once. This adds the approval column and row-level security, updates the
+   signup trigger, and fixes the Super Admin Add User UUID function. It does
+   not delete existing accounts. Do not run only the older
+   `fix_admin_create_user_uuid.sql` if applying this migration.
+4. Merge/deploy the website changes so the registration page, pending screen,
+   and User Management approval controls are available.
+5. In **User Management**, use the green approval action on a pending account
+   to allow website access. Use the clock action to revoke access again. The
+   current Super Admin account cannot revoke its own approval.
+6. Test with one new account. It should receive no email and remain on the
+   pending screen after authentication until a Super Admin approves it. After
+   approval, the user can reload the page or sign in again to use the app.
 
-Supabase documentation: [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+If a new signup succeeds but the page says Supabase confirmation is still
+enabled, return to step 1 and turn off **Confirm email**. Existing users are
+preserved. Existing accounts still unconfirmed in Supabase Auth may need to be
+confirmed manually in **Authentication → Users** before they can sign in; this
+migration does not confirm existing Auth accounts.
+
+**Security note:** Turning off email confirmation means the app cannot prove
+that a person owns the email address they enter. Super Admins should verify a
+person's identity through an appropriate offline channel before approval.
+Approval controls app access; it is not email ownership verification.
+
+Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
-If signup already created an unconfirmed user, do not register that address
-again; after SMTP is configured, send a single confirmation resend from User
-Management.
 
-### Fix Super Admin "Add User" UUID error
+### Database setup
 
-For an existing project, open **Supabase → SQL Editor**, paste the contents of
-`supabase/fix_admin_create_user_uuid.sql`, and run it once. This replaces only
-the `admin_create_user` function, correcting its UUID `instance_id`; it does not
-delete or modify existing accounts. Then reload the website and try Add User
-again. New installs can use the corrected function in `supabase/schema.sql`.
-Super Admin-created accounts are marked confirmed immediately by this RPC and
-do not receive a confirmation email; use the public signup flow when email
-confirmation is required.
-
-### Database Tables
-
-Create the following tables in your Supabase SQL editor:
-
-```sql
--- Tasks table
-CREATE TABLE tasks (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  due_date TIMESTAMP WITH TIME ZONE,
-  frequency TEXT DEFAULT 'one-time',
-  status TEXT DEFAULT 'pending',
-  assigned_to UUID REFERENCES auth.users(id),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- User profiles
-CREATE TABLE profiles (
-  id UUID REFERENCES auth.users(id) PRIMARY KEY,
-  full_name TEXT,
-  position TEXT, -- Position / Designation
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Enable RLS
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-
--- Policies
-CREATE POLICY "Users can view all tasks" ON tasks FOR SELECT USING (true);
-CREATE POLICY "Authenticated users can insert tasks" ON tasks FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-CREATE POLICY "Users can update own tasks" ON tasks FOR UPDATE USING (auth.uid() = assigned_to);
-CREATE POLICY "Users can view own profile" ON profiles FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
-```
+For a new Supabase project, run the complete `supabase/schema.sql` in the SQL
+Editor once. It creates the application's tables, policies, triggers, and
+functions. Do not use partial sample table SQL in place of that file. For an
+existing project, use the focused migration described above so current data and
+accounts are preserved.
 
 ## Deployment
 

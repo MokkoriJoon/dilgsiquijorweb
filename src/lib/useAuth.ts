@@ -38,6 +38,7 @@ export function useAuth() {
           email: user?.email ?? null,
           position: (user?.user_metadata?.position as string) ?? null,
           role: 'STANDARD',
+          is_approved: false,
         });
       }
       setLoading(false);
