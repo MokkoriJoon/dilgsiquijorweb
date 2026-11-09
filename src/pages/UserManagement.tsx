@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../lib/useAuth';
-import { supabase } from '../lib/supabase';
+import { createIsolatedAuthClient, supabase } from '../lib/supabase';
 import type { Profile, UserRole } from '../lib/types';
 import { USER_ROLES, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { toTitleCase } from '../lib/case';
@@ -16,7 +16,6 @@ import {
   CalendarDays,
   KeyRound,
   MailCheck,
-  MailWarning,
 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 
@@ -47,7 +46,11 @@ export default function UserManagement() {
   const [deleting, setDeleting] = useState(false);
   /* Shown after a SUPER_ADMIN creates a user: tells them whether the new
      account's email-confirmation link was actually delivered. */
-  const [confirmMailInfo, setConfirmMailInfo] = useState<{ sent: boolean; email: string } | null>(null);
+  const [confirmMailInfo, setConfirmMailInfo] = useState<{
+    email: string;
+    kind: 'created' | 'resent';
+  } | null>(null);
+  const [emailChangeInfo, setEmailChangeInfo] = useState<{ oldEmail: string; newEmail: string } | null>(null);
   /* Content that belongs ONLY to the target and will be removed with the
      login (personal tasks / personal categories / bookmarks — STANDARD). */
   const [deleteImpact, setDeleteImpact] = useState<{ personalTasks: number; personalCategories: number; bookmarks: number } | null>(null);
@@ -195,6 +198,7 @@ export default function UserManagement() {
   function openCreate() {
     setFormError('');
     setConfirmMailInfo(null);
+    setEmailChangeInfo(null);
     setForm({
       full_name: '',
       email: '',
@@ -209,6 +213,7 @@ export default function UserManagement() {
   function openEdit(user: Profile) {
     setFormError('');
     setConfirmMailInfo(null);
+    setEmailChangeInfo(null);
     setForm({
       id: user.id,
       full_name: user.full_name ?? '',
@@ -240,63 +245,125 @@ export default function UserManagement() {
     }
 
     setSaving(true);
-    let err: string | null = null;
+    try {
+      const email = form.email.trim().toLowerCase();
 
-    if (form.id) {
-      // Update profile info + role (allowed by the SUPER_ADMIN RLS policy)
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          full_name: cleanName,
-          email: form.email.trim().toLowerCase(),
-          position: cleanPosition || null,
-          role: form.role,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', form.id);
-      err = error?.message ?? null;
-    } else {
-      // Create auth user + profile via SECURITY DEFINER RPC.
-      // The account is created UNCONFIRMED and Supabase emails the new user a
-      // confirmation link (SMTP "Confirm your email" template) automatically.
-      const { data, error: rpcErr } = await supabase.rpc<{
-        user_id: string;
-        email: string;
-        confirmation_sent: boolean;
-      }>('admin_create_user', {
-        p_email: form.email.trim().toLowerCase(),
-        p_password: form.password,
-        p_full_name: cleanName,
-        p_position: cleanPosition || null,
-        p_role: form.role,
-      });
-      if (rpcErr) {
-        const m = rpcErr.message ?? '';
-        if (/already registered|duplicate key/i.test(m)) {
-          err = 'That email is already registered.';
-        } else if (
-          /SMTP|mailer|not configured|send.*email|confirmation email/i.test(m)
-        ) {
-          err = `${m} — Ask an administrator to enable SMTP in Supabase → Authentication → Providers → Email (SMTP settings), then try again.`;
-        } else if (/does not exist|function|schema cache|search_path/i.test(m)) {
-          err =
-            'The admin_create_user function is missing or outdated. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7 installs pgcrypto and recreates admin_create_user with email confirmation), then try again.';
-        } else {
-          err = m;
+      if (form.id) {
+        const existingEmail = (users.find((user) => user.id === form.id)?.email ?? '')
+          .trim()
+          .toLowerCase();
+        const changingEmail = email !== existingEmail;
+
+        if (changingEmail) {
+          const { error } = await supabase.functions.invoke('admin-change-user-email', {
+            body: { userId: form.id, newEmail: email },
+          });
+          if (error) {
+            let message = error.message ?? '';
+            if (error.context instanceof Response) {
+              const details: unknown = await error.context.clone().json().catch(() => null);
+              if (
+                details &&
+                typeof details === 'object' &&
+                'error' in details &&
+                typeof details.error === 'string'
+              ) {
+                message = details.error;
+              }
+            }
+            setFormError(
+              /failed to send a request|function not found|404/i.test(message)
+                ? 'Email verification is not configured yet. Deploy the admin-change-user-email Supabase Edge Function and configure its email-provider secrets; see the Supabase Setup section in README.md.'
+                : `Could not send the email verification link: ${message}`,
+            );
+            return;
+          }
+          setEmailChangeInfo({ oldEmail: existingEmail, newEmail: email });
         }
-      } else if (data) {
-        setConfirmMailInfo({ sent: !!data.confirmation_sent, email: data.email });
-      }
-    }
 
-    setSaving(false);
-    if (err) {
-      setFormError(err);
-      return;
+        // The auth.users email is changed by Supabase only after verification.
+        // Keep profiles.email in sync through the auth.users database trigger.
+        const { data: updatedProfile, error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: cleanName,
+            position: cleanPosition || null,
+            role: form.role,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', form.id)
+          .select('id')
+          .maybeSingle();
+        if (error || !updatedProfile) {
+          const detail = error?.message ?? 'No profile row was updated.';
+          setFormError(
+            changingEmail
+              ? `The verification link was sent to ${email}, but the other profile changes could not be saved: ${detail}`
+              : detail,
+          );
+          return;
+        }
+      } else {
+        // Use a non-persistent client so signing up the new account cannot
+        // replace the Super Admin's active session in the shared client.
+        const signupClient = createIsolatedAuthClient();
+        const { data, error } = await signupClient.auth.signUp({
+          email,
+          password: form.password,
+          options: {
+            data: { full_name: cleanName, position: cleanPosition || null },
+            emailRedirectTo: `${window.location.origin}/#/login`,
+          },
+        });
+        if (error) {
+          setFormError(
+            /already registered|already been registered|user already exists|duplicate key/i.test(error.message)
+              ? 'That email is already registered.'
+              : /SMTP|mailer|not configured|send.*email|confirmation email/i.test(error.message)
+                ? `${error.message} — Enable SMTP in Supabase → Authentication → Providers → Email, then try again.`
+                : error.message,
+          );
+          return;
+        }
+        if (!data.user) {
+          setFormError('Supabase did not return the new user account. Please try again.');
+          return;
+        }
+
+        // The auth.users trigger creates the STANDARD profile. Elevation is
+        // performed only through the existing Super Admin profile policy.
+        const { data: updatedProfile, error: profileError } = await supabase
+          .from('profiles')
+          .update({
+            full_name: cleanName,
+            email,
+            position: cleanPosition || null,
+            role: form.role,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', data.user.id)
+          .select('id')
+          .maybeSingle();
+        if (profileError || !updatedProfile) {
+          setFormError(
+            `The account was created, but its profile could not be configured: ${profileError?.message ?? 'No profile row was created by the auth trigger.'}`,
+          );
+          return;
+        }
+
+        if (!data.user.email_confirmed_at) {
+          setConfirmMailInfo({ email, kind: 'created' });
+        }
+      }
+
+      setShowModal(false);
+      setForm(null);
+      await loadUsers();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'An unexpected error occurred.');
+    } finally {
+      setSaving(false);
     }
-    setShowModal(false);
-    setForm(null);
-    loadUsers();
   }
 
   /** Re-send the account-confirmation email to a user whose mailbox never got it. */
@@ -307,19 +374,16 @@ export default function UserManagement() {
       return;
     }
     try {
-      const { error } = await supabase.rpc('admin_send_confirmation_email', {
-        p_email: user.email.toLowerCase(),
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: user.email.toLowerCase(),
+        options: { emailRedirectTo: `${window.location.origin}/#/login` },
       });
       if (error) {
-        const m = error.message ?? '';
-        setPageError(
-          /does not exist|function|schema cache/i.test(m)
-            ? 'The admin_send_confirmation_email function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7d), then try again.'
-            : m,
-        );
+        setPageError(error.message);
         return;
       }
-      setConfirmMailInfo({ sent: true, email: user.email });
+      setConfirmMailInfo({ email: user.email, kind: 'resent' });
     } catch {
       setPageError('Failed to send the confirmation email. Please try again.');
     }
@@ -341,7 +405,7 @@ export default function UserManagement() {
       const m = error.message ?? '';
       setPageError(
         /admin_delete_user|does not exist|function|schema cache/i.test(m)
-          ? 'The admin_delete_user function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7c), then try again.'
+          ? 'The admin_delete_user function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7b), then try again.'
           : m,
       );
       return;
@@ -396,39 +460,39 @@ export default function UserManagement() {
       )}
 
       {confirmMailInfo && (
-        <div
-          className={`rounded-lg p-3 mb-4 flex items-start justify-between gap-2 border ${
-            confirmMailInfo.sent
-              ? 'bg-green-50 border-green-200'
-              : 'bg-amber-50 border-amber-200'
-          }`}
-        >
-          <p className={`text-sm ${confirmMailInfo.sent ? 'text-green-700' : 'text-amber-700'}`}>
-            {confirmMailInfo.sent ? (
+        <div className="rounded-lg p-3 mb-4 flex items-start justify-between gap-2 border bg-green-50 border-green-200">
+          <p className="text-sm text-green-700">
+            {confirmMailInfo.kind === 'created' ? (
               <>
-                ✓ Account created for{' '}
-                <span className="font-semibold">{confirmMailInfo.email}</span>. A{' '}
-                <span className="font-medium">confirmation email</span> was sent to that
-                inbox — the user must click it to activate the account before signing in.
+                ✓ Account created for <span className="font-semibold">{confirmMailInfo.email}</span>.
+                A confirmation email was sent to that inbox — the user must click it to
+                activate the account before signing in.
               </>
             ) : (
               <>
-                <MailWarning size={14} className="inline -mt-0.5 mr-1" />
-                Account created, but the confirmation email could not be delivered (SMTP
-                may not be configured). Set up SMTP in Supabase → Authentication →
-                Providers → Email, then use the “Send confirmation email” action on the
-                user&apos;s row ({confirmMailInfo.email}).
+                ✓ A confirmation email was sent to{' '}
+                <span className="font-semibold">{confirmMailInfo.email}</span>. The user
+                must click the link to activate the account before signing in.
               </>
             )}
           </p>
           <button
             onClick={() => setConfirmMailInfo(null)}
-            className={
-              confirmMailInfo.sent
-                ? 'text-green-400 hover:text-green-600'
-                : 'text-amber-400 hover:text-amber-600'
-            }
+            className="text-green-400 hover:text-green-600"
           >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {emailChangeInfo && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex items-start justify-between gap-2">
+          <p className="text-blue-800 text-sm">
+            Verification links were sent to {emailChangeInfo.oldEmail} and{' '}
+            <span className="font-semibold">{emailChangeInfo.newEmail}</span>. The account
+            will keep using the current email until the new address is verified.
+          </p>
+          <button onClick={() => setEmailChangeInfo(null)} className="text-blue-400 hover:text-blue-600">
             <X size={16} />
           </button>
         </div>
@@ -609,6 +673,11 @@ export default function UserManagement() {
                   placeholder="staff@dilg.gov.ph"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
+                {form.id && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    A changed email takes effect only after the new address is verified.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">

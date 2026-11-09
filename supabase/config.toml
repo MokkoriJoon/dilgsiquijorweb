@@ -1,0 +1,2 @@
+[functions.admin-change-user-email]
+verify_jwt = true
