@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../lib/useAuth';
 import { supabase } from '../lib/supabase';
+import { emailRateLimitMessage } from '../lib/authErrors';
 import type { Profile, UserRole } from '../lib/types';
 import { USER_ROLES, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { toTitleCase } from '../lib/case';
@@ -45,8 +46,8 @@ export default function UserManagement() {
 
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deleting, setDeleting] = useState(false);
-  /* Shown after a SUPER_ADMIN creates a user: tells them whether the new
-     account's email-confirmation link was actually delivered. */
+  /* The admin_create_user RPC marks administrator-created accounts confirmed
+     without sending an email. */
   const [confirmMailInfo, setConfirmMailInfo] = useState<{ sent: boolean; email: string } | null>(null);
   /* Content that belongs ONLY to the target and will be removed with the
      login (personal tasks / personal categories / bookmarks — STANDARD). */
@@ -256,14 +257,9 @@ export default function UserManagement() {
         .eq('id', form.id);
       err = error?.message ?? null;
     } else {
-      // Create auth user + profile via SECURITY DEFINER RPC.
-      // The account is created UNCONFIRMED and Supabase emails the new user a
-      // confirmation link (SMTP "Confirm your email" template) automatically.
-      const { data, error: rpcErr } = await supabase.rpc<{
-        user_id: string;
-        email: string;
-        confirmation_sent: boolean;
-      }>('admin_create_user', {
+      // Create auth user + profile via SECURITY DEFINER RPC. This RPC returns
+      // the new user's UUID and marks administrator-created accounts confirmed.
+      const { data, error: rpcErr } = await supabase.rpc('admin_create_user', {
         p_email: form.email.trim().toLowerCase(),
         p_password: form.password,
         p_full_name: cleanName,
@@ -272,8 +268,14 @@ export default function UserManagement() {
       });
       if (rpcErr) {
         const m = rpcErr.message ?? '';
+        const rateLimitError = emailRateLimitMessage(m);
         if (/already registered|duplicate key/i.test(m)) {
           err = 'That email is already registered.';
+        } else if (/invalid input syntax for type uuid.*production/i.test(m)) {
+          err =
+            'The database still has the old admin_create_user function. In Supabase → SQL Editor, run supabase/fix_admin_create_user_uuid.sql, then try again.';
+        } else if (rateLimitError) {
+          err = rateLimitError;
         } else if (
           /SMTP|mailer|not configured|send.*email|confirmation email/i.test(m)
         ) {
@@ -285,7 +287,9 @@ export default function UserManagement() {
           err = m;
         }
       } else if (data) {
-        setConfirmMailInfo({ sent: !!data.confirmation_sent, email: data.email });
+        setConfirmMailInfo({ sent: false, email: form.email.trim().toLowerCase() });
+      } else {
+        err = 'Supabase did not return a user ID, so the account could not be confirmed as created.';
       }
     }
 
@@ -307,16 +311,13 @@ export default function UserManagement() {
       return;
     }
     try {
-      const { error } = await supabase.rpc('admin_send_confirmation_email', {
-        p_email: user.email.toLowerCase(),
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: user.email.toLowerCase(),
       });
       if (error) {
         const m = error.message ?? '';
-        setPageError(
-          /does not exist|function|schema cache/i.test(m)
-            ? 'The admin_send_confirmation_email function is missing. Open Supabase → SQL Editor and run supabase/schema.sql once (section 7d), then try again.'
-            : m,
-        );
+        setPageError(emailRateLimitMessage(m) ?? m);
         return;
       }
       setConfirmMailInfo({ sent: true, email: user.email });
@@ -414,10 +415,9 @@ export default function UserManagement() {
             ) : (
               <>
                 <MailWarning size={14} className="inline -mt-0.5 mr-1" />
-                Account created, but the confirmation email could not be delivered (SMTP
-                may not be configured). Set up SMTP in Supabase → Authentication →
-                Providers → Email, then use the “Send confirmation email” action on the
-                user&apos;s row ({confirmMailInfo.email}).
+                Account created for <span className="font-semibold">{confirmMailInfo.email}</span>.
+                This Super Admin action marks the account confirmed and does not send an
+                email. Share its sign-in details securely with the user.
               </>
             )}
           </p>

@@ -57,6 +57,49 @@ npm run dev
 
 ## Supabase Setup
 
+### Fix signup email rate limits
+
+The application cannot override Supabase Auth's email-sending limit. Supabase's
+built-in email sender is intended for testing: it allows **2 emails per hour
+per project** and only sends to addresses belonging to the Supabase
+organization team. Use custom SMTP to send confirmation emails to staff:
+
+1. **Stop repeated signup attempts.** Wait for the current email quota to refill.
+   In Supabase, open **Authentication → Users** and check whether the address
+   already has an account before trying again.
+2. **Choose an SMTP provider** (for example, Resend or Brevo) and verify a sender
+   domain/address there. Add the provider's recommended SPF/DKIM DNS records.
+3. In the Supabase dashboard, open **Project Settings → Authentication → SMTP
+   Settings** (or **Authentication → SMTP Settings**), enable custom SMTP, and
+   enter the SMTP host, port, username, password, and verified sender address.
+   Keep the SMTP password private; do not put it in this repository or in
+   `VITE_*` browser environment variables.
+4. Open **Authentication → Rate Limits**. Review the project email-send limit
+   and set it to a value supported by your SMTP provider. Start conservatively;
+   the default email-sender limit is not increased just by changing app code.
+5. In **Authentication → URL Configuration**, set the app's site URL and add
+   its sign-in/confirmation URL to the redirect allow list. Save the settings.
+6. Submit signup once with an email address you control and check its inbox and
+   spam folder. Avoid repeatedly clicking signup or resend; these endpoints
+   have per-address limits too.
+
+Supabase documentation: [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
+If signup already created an unconfirmed user, do not register that address
+again; after SMTP is configured, send a single confirmation resend from User
+Management.
+
+### Fix Super Admin "Add User" UUID error
+
+For an existing project, open **Supabase → SQL Editor**, paste the contents of
+`supabase/fix_admin_create_user_uuid.sql`, and run it once. This replaces only
+the `admin_create_user` function, correcting its UUID `instance_id`; it does not
+delete or modify existing accounts. Then reload the website and try Add User
+again. New installs can use the corrected function in `supabase/schema.sql`.
+Super Admin-created accounts are marked confirmed immediately by this RPC and
+do not receive a confirmation email; use the public signup flow when email
+confirmation is required.
+
 ### Database Tables
 
 Create the following tables in your Supabase SQL editor:

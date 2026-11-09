@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { emailRateLimitMessage } from '../lib/authErrors';
 import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
 import { useSiteBranding } from '../lib/siteSettings';
 import { BrandLogo } from './Login';
@@ -92,7 +93,7 @@ export default function Register() {
       });
 
       if (signUpError) {
-        setError(signUpError.message);
+        setError(emailRateLimitMessage(signUpError.message) ?? signUpError.message);
         return;
       }
 
