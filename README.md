@@ -95,6 +95,11 @@ that a person owns the email address they enter. Super Admins should verify a
 person's identity through an appropriate offline channel before approval.
 Approval controls app access; it is not email ownership verification.
 
+Email-based forgot-password and password-reset links are disabled in the
+website. If a user forgets their password, a Super Admin can set a new password
+directly from **User Management → Set Password** and share it securely. The
+password can be generated randomly in that dialog.
+
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
 

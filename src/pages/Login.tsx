@@ -40,8 +40,6 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [resetSent, setResetSent] = useState(false);
-  const [showReset, setShowReset] = useState(false);
 
   const validateEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -86,35 +84,6 @@ export default function Login() {
     }
   };
 
-  const handlePasswordReset = async () => {
-    if (!email.trim()) {
-      setError('Please enter your email address first');
-      return;
-    }
-    if (!validateEmail(email)) {
-      setError('Please enter a valid email address');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    try {
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/login`,
-      });
-
-      if (resetError) {
-        setError(resetError.message);
-        return;
-      }
-      setResetSent(true);
-    } catch (err) {
-      setError('Failed to send reset email. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       {/* Header */}
@@ -145,15 +114,6 @@ export default function Login() {
               </p>
             </div>
 
-            {/* Reset Password Success */}
-            {resetSent && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
-                <p className="text-green-700 text-sm">
-                  Password reset email sent! Check your inbox.
-                </p>
-              </div>
-            )}
-
             {/* Error Message */}
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
@@ -162,8 +122,7 @@ export default function Login() {
             )}
 
             {/* Login Form */}
-            {!showReset ? (
-              <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4">
                 {/* Email */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -199,8 +158,8 @@ export default function Login() {
                   </div>
                 </div>
 
-                {/* Remember me & Forgot Password */}
-                <div className="flex items-center justify-between">
+                {/* Remember me */}
+                <div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -210,13 +169,6 @@ export default function Login() {
                     />
                     <span className="text-sm text-gray-600">Remember me</span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowReset(true)}
-                    className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    Forgot Password?
-                  </button>
                 </div>
 
                 {/* Submit */}
@@ -234,48 +186,7 @@ export default function Login() {
                     'Sign In'
                   )}
                 </button>
-              </form>
-            ) : (
-              /* Password Reset Form */
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Enter your email to receive a password reset link
-                  </label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="staff@dilg.gov.ph"
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={handlePasswordReset}
-                  disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      Sending...
-                    </>
-                  ) : (
-                    'Send Reset Link'
-                  )}
-                </button>
-                <button
-                  onClick={() => setShowReset(false)}
-                  className="w-full text-gray-600 hover:text-gray-800 py-2 text-sm font-medium flex items-center justify-center gap-1"
-                >
-                  <ArrowLeft size={14} />
-                  Back to Login
-                </button>
-              </div>
-            )}
+            </form>
 
             {/* Register Link */}
             <div className="mt-6 text-center">
