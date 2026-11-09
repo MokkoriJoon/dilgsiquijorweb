@@ -16,9 +16,9 @@ import {
   ShieldCheck,
   CalendarDays,
   KeyRound,
-  MailCheck,
   UserCheck,
   Clock3,
+  Shuffle,
 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 
@@ -30,6 +30,33 @@ interface UserFormState {
   role: UserRole;
   password: string;
   confirmPassword: string;
+}
+
+function generateRandomPassword(length = 16) {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const all = upper + lower + digits;
+  const randomIndex = (max: number) => {
+    const limit = Math.floor(0x100000000 / max) * max;
+    const value = new Uint32Array(1);
+    do {
+      crypto.getRandomValues(value);
+    } while (value[0] >= limit);
+    return value[0] % max;
+  };
+  const characters = [
+    upper[randomIndex(upper.length)],
+    lower[randomIndex(lower.length)],
+    digits[randomIndex(digits.length)],
+    ...Array.from({ length: length - 3 }, () => all[randomIndex(all.length)]),
+  ];
+
+  for (let i = characters.length - 1; i > 0; i--) {
+    const j = randomIndex(i + 1);
+    [characters[i], characters[j]] = [characters[j], characters[i]];
+  }
+  return characters.join('');
 }
 
 export default function UserManagement() {
@@ -85,30 +112,6 @@ export default function UserManagement() {
     setPwDone('');
   }
 
-  async function sendResetLink() {
-    if (!pwTarget) return;
-    if (!pwTarget.email) {
-      setPwError('This user has no email on file, so a reset link cannot be sent.');
-      return;
-    }
-    setPwError('');
-    setPwBusy(true);
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(pwTarget.email, {
-        redirectTo: `${window.location.origin}/login`,
-      });
-      if (error) setPwError(error.message);
-      else
-        setPwDone(
-          `A password-reset link was sent to ${pwTarget.email}. The user can use it on the login page (“Forgot Password?” flow) to choose a new password.`,
-        );
-    } catch {
-      setPwError('Failed to send reset email. Please try again.');
-    } finally {
-      setPwBusy(false);
-    }
-  }
-
   async function setUserPasswordDirectly() {
     if (!pwTarget) return;
     setPwError('');
@@ -137,10 +140,8 @@ export default function UserManagement() {
         );
       } else {
         setPwDone(
-          `Password updated for ${pwTarget.full_name ?? pwTarget.email}. Share the new temporary password securely — the user should change it after signing in.`,
+          `Password updated for ${pwTarget.full_name ?? pwTarget.email}. Share the password shown above securely — no reset email was sent.`,
         );
-        setNewPassword('');
-        setConfirmPassword('');
       }
     } finally {
       setPwBusy(false);
@@ -532,7 +533,7 @@ export default function UserManagement() {
                         </button>
                         <button
                           onClick={() => openResetPassword(user)}
-                          title="Forgot / change this user's password"
+                          title="Set this user's password directly"
                           className="p-2 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors"
                         >
                           <KeyRound size={15} />
@@ -718,7 +719,7 @@ export default function UserManagement() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                 <KeyRound size={18} className="text-amber-600" />
-                <span className="truncate">Reset Password</span>
+                <span className="truncate">Set Password</span>
               </h3>
               <button
                 onClick={() => setPwTarget(null)}
@@ -744,38 +745,39 @@ export default function UserManagement() {
               </div>
             )}
 
-            {/* Option 1 — email a reset link (forgot-password flow) */}
-            <div className="border border-gray-200 rounded-lg p-4 mb-4">
-              <h4 className="text-sm font-semibold text-gray-700 mb-1">
-                Send password-reset email
-              </h4>
-              <p className="text-xs text-gray-500 mb-3">
-                The user receives a link to choose a new password themselves (same flow as
-                “Forgot Password?” on the login page).
-              </p>
-              <button
-                onClick={sendResetLink}
-                disabled={pwBusy}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50"
-              >
-                {pwBusy ? <Loader2 size={15} className="animate-spin" /> : <MailCheck size={15} />}
-                Send Reset Link
-              </button>
-            </div>
-
-            {/* Option 2 — set a new temporary password directly */}
             <div className="border border-gray-200 rounded-lg p-4">
               <h4 className="text-sm font-semibold text-gray-700 mb-1">
                 Set a new password directly
               </h4>
               <p className="text-xs text-gray-500 mb-3">
-                Creates a temporary password you can share with the user securely.
+                Set a password directly, or generate a strong random one. Share it securely.
               </p>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    New Password *
-                  </label>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs font-medium text-gray-600">
+                      New Password *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const password = generateRandomPassword();
+                          setNewPassword(password);
+                          setConfirmPassword(password);
+                          setPwError('');
+                          setPwDone('');
+                        } catch {
+                          setPwError('Could not generate a secure password in this browser.');
+                        }
+                      }}
+                      disabled={pwBusy}
+                      className="inline-flex items-center gap-1 rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      <Shuffle size={13} />
+                      Random Password
+                    </button>
+                  </div>
                   <PasswordInput
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
