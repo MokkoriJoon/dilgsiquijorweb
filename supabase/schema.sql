@@ -600,7 +600,7 @@ BEGIN
     created_at, updated_at,
     confirmation_token, email_change, email_change_token_new, recovery_token
   ) VALUES (
-    'production', v_user_id, 'authenticated', 'authenticated',
+    '00000000-0000-0000-0000-000000000000', v_user_id, 'authenticated', 'authenticated',
     lower(btrim(p_email)),
     public.crypt(p_password, public.gen_salt('bf')),
     NOW(),
