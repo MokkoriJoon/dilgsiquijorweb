@@ -57,30 +57,6 @@ npm run dev
 
 ## Supabase Setup
 
-For an existing project, run `supabase/user_management_migration.sql` once in
-the Supabase SQL Editor. For a new project, run `supabase/schema.sql`. The
-migration removes the legacy direct-auth-user creation RPC, ensures public
-signups cannot choose their own role, and synchronizes a profile email only
-after Supabase Auth confirms an email change.
-
-The Super Admin email-change action uses the
-`supabase/functions/admin-change-user-email` Edge Function. Deploy it with the
-Supabase CLI and configure a Resend sender:
-
-```bash
-supabase functions deploy admin-change-user-email
-supabase secrets set RESEND_API_KEY=your-resend-api-key EMAIL_FROM="D.E.N.N.I.S. <accounts@example.com>" APP_URL=https://your-app.example.com
-```
-
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to deployed
-Supabase Edge Functions; the service-role key must never be added to the
-browser app. Verify the sender domain in Resend, and add
-`https://your-app.example.com/#/login` to Supabase Authentication's allowed
-redirect URLs. The new address remains pending in Auth and in User Management
-until its verification link is clicked. Account creation and confirmation
-resends use Supabase Auth's built-in email flow and require the project's
-Authentication → Providers → Email settings to allow signups and send email.
-
 ### Database Tables
 
 Create the following tables in your Supabase SQL editor:
