@@ -100,6 +100,18 @@ website. If a user forgets their password, a Super Admin can set a new password
 directly from **User Management → Set Password** and share it securely. The
 password can be generated randomly in that dialog.
 
+### Recurring task occurrences
+
+Recurring schedules show each due date as its own occurrence. Missed dates
+remain overdue while today's and the next scheduled dates remain separate
+pending items. Completing a date records completion only for that occurrence
+and assignee; the next scheduled date stays pending.
+
+For an existing project, run `supabase/task_occurrences_migration.sql` once in
+the SQL Editor after the account-approval migration has been applied. New
+projects get this table from `supabase/schema.sql`. Deploy the website changes
+after the migration; no existing tasks are rewritten.
+
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
 

@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 import { friendlyDbError } from './dbErrors';
 import { useRealtimeTableChanges } from './realtime';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskLink } from './types';
-import { resolveTaskStatus } from './recurrence';
+import { expandTaskOccurrences, resolveTaskStatus, type OccurrenceCompletion } from './recurrence';
 import { effectiveDueDate } from './useTasks';
 
 /** One (task, assignee) slice — the unit every PUBLIC count is based on. */
@@ -37,7 +37,7 @@ export function usePublicDashboard() {
     setLoading(true);
     setError(null);
 
-    const [tasksRes, profilesRes, catsRes, linksRes, assignsRes] = await Promise.all([
+    const [tasksRes, profilesRes, catsRes, linksRes, assignsRes, occurrenceRes] = await Promise.all([
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
       // Only the public fields the board actually needs — works even with
       // stricter profile RLS and never blocks the whole dashboard.
@@ -52,9 +52,18 @@ export function usePublicDashboard() {
           if (!res.error) return res;
           return supabase.from('task_assignments').select('task_id,user_id');
         }),
+      supabase
+        .from('task_occurrence_completions')
+        .select('task_id,occurrence_date,user_id,completed,completed_at,completion_note,completed_by'),
     ]);
 
-    if (tasksRes.error) setError(friendlyDbError(tasksRes.error.message));
+    if (tasksRes.error || occurrenceRes.error) {
+      setError(
+        occurrenceRes.error
+          ? 'Task occurrence data is not installed. Run supabase/task_occurrences_migration.sql in Supabase SQL Editor, then reload.'
+          : friendlyDbError(tasksRes.error?.message ?? 'Could not load tasks.'),
+      );
+    }
     else setError(null);
 
     const pmap = new Map<string, Profile>();
@@ -90,7 +99,7 @@ export function usePublicDashboard() {
       assignmentRows.set(a.task_id, rows);
     });
 
-    const list: Task[] = ((tasksRes.data ?? []) as any[])
+    const templates: Task[] = ((tasksRes.data ?? []) as any[])
       .filter((r) => !r.is_personal) // personal tasks never appear on the public board
       .map((r) => {
         const assignees: string[] =
@@ -116,6 +125,10 @@ export function usePublicDashboard() {
         } as Task;
       });
 
+    const list = expandTaskOccurrences(
+      templates,
+      (occurrenceRes.data ?? []) as OccurrenceCompletion[],
+    );
     list.sort((a, b) => effectiveDueDate(a).localeCompare(effectiveDueDate(b)));
     setTasks(list);
     setLoading(false);
@@ -138,7 +151,7 @@ export function usePublicDashboard() {
   // navigation), crashing the page. See lib/realtime.ts.
   useRealtimeTableChanges(
     'public-dashboard',
-    ['tasks', 'task_links'],
+    ['tasks', 'task_links', 'task_occurrence_completions'],
     useCallback(() => fetchRef.current(), []),
   );
 

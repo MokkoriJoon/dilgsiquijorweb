@@ -4,7 +4,13 @@ import { supabase } from '../lib/supabase';
 import { friendlyDbError } from './dbErrors';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
 import { isAdminOrAbove } from '../lib/types';
-import { resolveTaskStatus, nextOccurrence } from './recurrence';
+import {
+  expandTaskOccurrences,
+  occurrenceIdentity,
+  resolveTaskStatus,
+  nextOccurrence,
+  type OccurrenceCompletion,
+} from './recurrence';
 
 /** Columns selected from the tasks table. */
 const TASK_SELECT =
@@ -30,7 +36,7 @@ export function useTasks(profile: Profile | null) {
     setLoading(true);
     setError(null);
 
-    const [tasksRes, profilesRes, catsRes, linksRes, assignsRes] = await Promise.all([
+    const [tasksRes, profilesRes, catsRes, linksRes, assignsRes, occurrenceRes] = await Promise.all([
       supabase.from('tasks').select(TASK_SELECT).order('created_at', { ascending: false }),
       supabase.from('profiles').select('*').order('full_name'),
       // Personal categories carry is_personal/owner_id; RLS (schema.sql) only
@@ -49,6 +55,9 @@ export function useTasks(profile: Profile | null) {
           if (!res.error) return res;
           return supabase.from('task_assignments').select('task_id,user_id');
         }),
+      supabase
+        .from('task_occurrence_completions')
+        .select('task_id,occurrence_date,user_id,completed,completed_at,completion_note,completed_by'),
     ]);
 
     const pmap = new Map<string, Profile>();
@@ -94,8 +103,13 @@ export function useTasks(profile: Profile | null) {
       });
     }
 
-    if (tasksRes.error) {
-      setError(friendlyDbError(tasksRes.error.message));
+    if (tasksRes.error || occurrenceRes.error) {
+      const message = tasksRes.error?.message ?? occurrenceRes.error?.message ?? 'Could not load task occurrences.';
+      setError(
+        occurrenceRes.error
+          ? 'Task occurrence data is not installed. Run supabase/task_occurrences_migration.sql in Supabase SQL Editor, then reload.'
+          : friendlyDbError(message),
+      );
     } else {
       const rows = (tasksRes.data ?? []) as any[];
       const list: Task[] = rows.map((r) => {
@@ -133,9 +147,13 @@ export function useTasks(profile: Profile | null) {
         } as Task;
       });
 
-      // Order by the *effective* next deadline so overdue items float to the top.
-      list.sort((a, b) => effectiveDueDate(a).localeCompare(effectiveDueDate(b)));
-      setTasks(list);
+      const occurrences = expandTaskOccurrences(
+        list,
+        (occurrenceRes.data ?? []) as OccurrenceCompletion[],
+      );
+      // Order dated occurrences by their own effective deadline.
+      occurrences.sort((a, b) => effectiveDueDate(a).localeCompare(effectiveDueDate(b)));
+      setTasks(occurrences);
     }
 
     setLoading(false);
@@ -160,8 +178,12 @@ export function useTasks(profile: Profile | null) {
   /** How many tasks use each category (for the Categories page). */
   const categoryTaskCount = useMemo(() => {
     const map = new Map<string, number>();
+    const counted = new Set<string>();
     tasks.forEach((t) => {
-      if (t.category_id) map.set(t.category_id, (map.get(t.category_id) ?? 0) + 1);
+      const taskId = t.series_id ?? t.id;
+      if (!t.category_id || counted.has(taskId)) return;
+      counted.add(taskId);
+      map.set(t.category_id, (map.get(t.category_id) ?? 0) + 1);
     });
     return map;
   }, [tasks]);
@@ -430,7 +452,46 @@ export function useTasks(profile: Profile | null) {
       links?: { label: string; url: string }[];
     },
   ) => {
+    const occurrence = occurrenceIdentity(id);
+    const taskId = occurrence?.taskId ?? id;
+    const occurrenceTarget = occurrence ? tasks.find((task) => task.id === id) : undefined;
+    const occurrenceStatusChange =
+      !!occurrence && !!patch.status && !!occurrenceTarget && patch.status !== occurrenceTarget.status;
+    if (occurrenceStatusChange && occurrence && occurrenceTarget && patch.status) {
+      const target = occurrenceTarget;
+      const isSuperAdmin = profile?.role === 'SUPER_ADMIN';
+      if (!isAssignedTo(target, profile?.id) && !isSuperAdmin) {
+        return { error: 'Only assigned users or a Super Admin can change this occurrence status.' };
+      }
+      const nowIso = new Date().toISOString();
+      const assignmentIds = (target.assignments ?? []).map((assignment) => assignment.user_id);
+      const userIds = isSuperAdmin
+        ? assignmentIds.length > 0 ? assignmentIds : profile?.id ? [profile.id] : []
+        : profile?.id ? [profile.id] : [];
+      const rows = userIds.map((userId) => ({
+        task_id: occurrence.taskId,
+        occurrence_date: occurrence.date,
+        user_id: userId,
+        completed: patch.status === 'completed',
+        completed_at: patch.status === 'completed' ? nowIso : null,
+        completion_note: patch.status === 'completed' ? patch.completion_note ?? null : null,
+        completed_by: patch.status === 'completed' ? profile?.id ?? null : null,
+        updated_at: nowIso,
+      }));
+      if (rows.length === 0) return { error: 'This occurrence has no assigned users.' };
+      const { error } = await supabase
+        .from('task_occurrence_completions')
+        .upsert(rows, { onConflict: 'task_id,occurrence_date,user_id' });
+      if (error) return { error: friendlyDbError(error.message) };
+    }
+
     const payload: Record<string, any> = { ...patch, updated_at: new Date().toISOString() };
+    if (occurrence && patch.status) {
+      delete payload.status;
+      delete payload.completed_at;
+      delete payload.completed_by;
+      delete payload.completion_note;
+    }
     if (patch.due_date !== undefined && patch.start_date === undefined) {
       payload.start_date = patch.due_date;
     }
@@ -449,18 +510,20 @@ export function useTasks(profile: Profile | null) {
     delete (payload as any).assignee_profiles;
     delete (payload as any).category;
 
-    const { error: err } = await supabase.from('tasks').update(payload).eq('id', id);
-    if (err) return { error: err.message };
+    if (Object.keys(payload).some((key) => key !== 'updated_at')) {
+      const { error: err } = await supabase.from('tasks').update(payload).eq('id', taskId);
+      if (err) return { error: err.message };
+    }
 
     if (patch.assignees) {
       const assignees = dedupe(patch.assignees.filter(Boolean));
       if (assignees.length > 0) {
-        await supabase.from('tasks').update({ assigned_to: assignees[0] }).eq('id', id);
+        await supabase.from('tasks').update({ assigned_to: assignees[0] }).eq('id', taskId);
       }
-      await syncAssignments(id, assignees);
+      await syncAssignments(taskId, assignees);
     }
     if (patch.links) {
-      const linkErr = await syncLinks(id, patch.links);
+      const linkErr =       await syncLinks(taskId, patch.links);
       if (linkErr) return { error: linkErr };
     }
 
@@ -563,6 +626,38 @@ export function useTasks(profile: Profile | null) {
     }
     const target = tasks.find((x) => x.id === id);
     const isSuper = profile?.role === 'SUPER_ADMIN';
+    const occurrence = occurrenceIdentity(id);
+    if (occurrence && target) {
+      if (!profile?.id) return { error: 'You must be signed in to complete this occurrence.' };
+      if (!isAssignedTo(target, profile.id) && !isSuper) {
+        return { error: 'Only users assigned to this task can mark it as complete.' };
+      }
+
+      const nowIso = new Date().toISOString();
+      const assignees = dedupe(
+        (target.assignees?.length ? target.assignees : [target.assigned_to]).filter(
+          (userId): userId is string => !!userId,
+        ),
+      );
+      const usersToComplete = isSuper ? (assignees.length ? assignees : [profile.id]) : [profile.id];
+      const rows = usersToComplete.map((userId) => ({
+        task_id: occurrence.taskId,
+        occurrence_date: occurrence.date,
+        user_id: userId,
+        completed: true,
+        completed_at: nowIso,
+        completion_note: userId === profile.id ? ack.note?.trim() || null : null,
+        completed_by: profile.id,
+        updated_at: nowIso,
+      }));
+      const { error } = await supabase
+        .from('task_occurrence_completions')
+        .upsert(rows, { onConflict: 'task_id,occurrence_date,user_id' });
+      if (error) return { error: friendlyDbError(error.message) };
+      await fetchData();
+      return {};
+    }
+
     if (target && profile?.id) {
       const mine = isAssignedTo(target, profile.id);
       if (!mine && !isSuper) {
@@ -629,6 +724,31 @@ export function useTasks(profile: Profile | null) {
   };
 
   const reopenTask = async (id: string) => {
+    const occurrence = occurrenceIdentity(id);
+    if (occurrence) {
+      const target = tasks.find((task) => task.id === id);
+      if (!target) return { error: 'Task occurrence not found. Reload and try again.' };
+      const nowIso = new Date().toISOString();
+      const assignments = target.assignments ?? [];
+      const rows = (assignments.length > 0 ? assignments : profile?.id ? [{ user_id: profile.id }] : []).map((assignment) => ({
+        task_id: occurrence.taskId,
+        occurrence_date: occurrence.date,
+        user_id: assignment.user_id,
+        completed: false,
+        completed_at: null,
+        completion_note: null,
+        completed_by: null,
+        updated_at: nowIso,
+      }));
+      if (rows.length === 0) return { error: 'This occurrence has no assigned users.' };
+      const { error } = await supabase
+        .from('task_occurrence_completions')
+        .upsert(rows, { onConflict: 'task_id,occurrence_date,user_id' });
+      if (error) return { error: friendlyDbError(error.message) };
+      await fetchData();
+      return {};
+    }
+
     const { error: err } = await supabase
       .from('tasks')
       .update({
@@ -650,9 +770,10 @@ export function useTasks(profile: Profile | null) {
   };
 
   const deleteTask = async (id: string) => {
-    const { error: err } = await supabase.from('tasks').delete().eq('id', id);
+    const taskId = occurrenceIdentity(id)?.taskId ?? id;
+    const { error: err } = await supabase.from('tasks').delete().eq('id', taskId);
     if (err) return { error: err.message };
-    setTasks((prev) => prev.filter((t) => t.id !== id));
+    setTasks((prev) => prev.filter((task) => (task.series_id ?? task.id) !== taskId));
     return {};
   };
 
@@ -796,6 +917,7 @@ export function useTasks(profile: Profile | null) {
 /** The date a task is effectively due right now (next unfinished occurrence). */
 export function effectiveDueDate(t: Task, now: Date = new Date()): string {
   const today = startOfDay(now);
+  if (t.occurrence_date) return t.occurrence_date;
   if (t.status === 'completed') return (t.due_date ?? '9999-12-31').slice(0, 10);
   if (t.frequency === 'one-time' || !t.due_date) {
     return (t.due_date ?? '9999-12-31').slice(0, 10);

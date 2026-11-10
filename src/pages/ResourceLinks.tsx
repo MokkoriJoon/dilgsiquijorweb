@@ -23,7 +23,10 @@ export default function ResourceLinks() {
 
   const grouped = useMemo(() => {
     const rows: { task: Task; links: { id: string; label: string; url: string }[] }[] = [];
+    const included = new Set<string>();
     for (const task of t.myTasks) {
+      const taskId = task.series_id ?? task.id;
+      if (included.has(taskId)) continue;
       const links = (task.links ?? []).filter(
         (l) =>
           !q.trim() ||
@@ -31,7 +34,10 @@ export default function ResourceLinks() {
           l.url.toLowerCase().includes(q.trim().toLowerCase()) ||
           task.title.toLowerCase().includes(q.trim().toLowerCase()),
       );
-      if (links.length > 0) rows.push({ task, links });
+      if (links.length > 0) {
+        rows.push({ task, links });
+        included.add(taskId);
+      }
     }
     return rows;
   }, [t.myTasks, q]);

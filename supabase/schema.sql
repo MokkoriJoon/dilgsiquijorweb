@@ -218,6 +218,21 @@ CREATE TABLE IF NOT EXISTS public.task_assignments (
   PRIMARY KEY (task_id, user_id)
 );
 
+-- 2e.1) TASK OCCURRENCE COMPLETIONS — independent certification per schedule date
+CREATE TABLE IF NOT EXISTS public.task_occurrence_completions (
+  task_id         UUID NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+  occurrence_date DATE NOT NULL,
+  user_id         UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  completed       BOOLEAN NOT NULL DEFAULT FALSE,
+  completed_at    TIMESTAMPTZ,
+  completion_note TEXT,
+  completed_by    UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (task_id, occurrence_date, user_id)
+);
+GRANT SELECT ON public.task_occurrence_completions TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.task_occurrence_completions TO authenticated;
+
 -- 2f) BOOKMARKS — personal (self-view) resource links per user
 --     (Fixes: "Could not find the table 'public.bookmarks' in the schema cache")
 CREATE TABLE IF NOT EXISTS public.bookmarks (
@@ -276,6 +291,7 @@ CREATE INDEX IF NOT EXISTS idx_bookmarks_user      ON public.bookmarks (user_id)
 ALTER TABLE public.task_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.task_links      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.task_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.task_occurrence_completions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.site_settings   ENABLE ROW LEVEL SECURITY;
 
@@ -325,6 +341,7 @@ CREATE POLICY "Assignments publicly readable"
   ON public.task_assignments FOR SELECT
   TO public
   USING (true);
+
 DROP POLICY IF EXISTS "Task managers can edit assignments" ON public.task_assignments;
 CREATE POLICY "Task managers can edit assignments"
   ON public.task_assignments FOR ALL TO authenticated
@@ -411,6 +428,7 @@ BEGIN
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.tasks; EXCEPTION WHEN duplicate_object THEN NULL; END;
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.task_categories; EXCEPTION WHEN duplicate_object THEN NULL; END;
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.announcements; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.task_occurrence_completions; EXCEPTION WHEN duplicate_object THEN NULL; END;
   END IF;
 END $$;
 
@@ -486,6 +504,37 @@ AS $$
   );
 $$;
 
+DROP POLICY IF EXISTS "Occurrence completions publicly readable" ON public.task_occurrence_completions;
+CREATE POLICY "Occurrence completions publicly readable"
+  ON public.task_occurrence_completions FOR SELECT
+  TO public
+  USING (true);
+DROP POLICY IF EXISTS "Assigned users update occurrence completions" ON public.task_occurrence_completions;
+CREATE POLICY "Assigned users update occurrence completions"
+  ON public.task_occurrence_completions FOR ALL TO authenticated
+  USING (
+    public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN')
+    OR (
+      user_id = auth.uid()
+      AND EXISTS (
+        SELECT 1 FROM public.task_assignments a
+        WHERE a.task_id = task_occurrence_completions.task_id
+          AND a.user_id = auth.uid()
+      )
+    )
+  )
+  WITH CHECK (
+    public.get_current_role() IN ('ADMIN', 'SUPER_ADMIN')
+    OR (
+      user_id = auth.uid()
+      AND EXISTS (
+        SELECT 1 FROM public.task_assignments a
+        WHERE a.task_id = task_occurrence_completions.task_id
+          AND a.user_id = auth.uid()
+      )
+    )
+  );
+
 -- 4) RLS POLICIES — PROFILES
 -- Profiles are readable by everyone so the Public Dashboard can show who is
 -- assigned to each task (name/position only — no sensitive columns exist).
@@ -530,6 +579,7 @@ BEGIN
     'task_categories',
     'task_links',
     'task_assignments',
+    'task_occurrence_completions',
     'bookmarks',
     'site_settings',
     'announcements'

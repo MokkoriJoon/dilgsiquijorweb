@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { format } from 'date-fns';
 import type { Task } from '../lib/types';
 import { STATUS_META } from '../lib/taskMeta';
 import { describeRecurrence, nextOccurrence, resolveTaskStatus } from '../lib/recurrence';
@@ -228,11 +229,14 @@ export function LinksIndicator({ task }: { task: Task }) {
 /** Next scheduled occurrence hint for recurring tasks. */
 export function NextRunHint({ task }: { task: Task }) {
   if (task.frequency === 'one-time' || task.status === 'completed') return null;
-  const nxt = nextOccurrence(task, new Date());
+  const from = task.occurrence_date
+    ? new Date(`${task.occurrence_date}T00:00:00`)
+    : new Date();
+  const nxt = nextOccurrence(task, from);
   if (!nxt) return null;
   return (
     <span className="text-[11px] text-indigo-600">
-      Next: {formatDueDate(nxt.toISOString())}
+      Next Due Date: {formatDueDate(format(nxt, 'yyyy-MM-dd'))}
     </span>
   );
 }
