@@ -85,7 +85,7 @@ export function draftFromTask(task: Task): TaskDraft {
   return {
     title: task.title,
     description: task.description ?? '',
-    due_date: task.due_date ? task.due_date.slice(0, 10) : '',
+    due_date: (task.series_due_date ?? task.due_date)?.slice(0, 10) ?? '',
     frequency: task.frequency ?? 'one-time',
     days_of_week:
       Array.isArray(task.days_of_week) && task.days_of_week.length > 0

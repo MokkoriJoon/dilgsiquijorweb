@@ -18,7 +18,17 @@ import {
   parseISO,
   startOfDay,
 } from 'date-fns';
-import type { TaskFrequency } from './types';
+import type { Task, TaskAssignment, TaskFrequency } from './types';
+
+export interface OccurrenceCompletion {
+  task_id: string;
+  occurrence_date: string;
+  user_id: string;
+  completed: boolean;
+  completed_at?: string | null;
+  completion_note?: string | null;
+  completed_by?: string | null;
+}
 
 export const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** Index convention: 0 = Monday … 6 = Sunday (ISO-8601). */
@@ -160,6 +170,91 @@ export function upcomingOccurrences(
 }
 
 /**
+ * Expand recurring templates into independently trackable dated occurrences.
+ * Includes every scheduled date through the next date after today, so missed
+ * dates stay visible while the current/next due date can also be completed.
+ */
+export function expandTaskOccurrences(
+  tasks: Task[],
+  completions: OccurrenceCompletion[],
+  now: Date = new Date(),
+): Task[] {
+  const completedByOccurrence = new Map<string, Map<string, OccurrenceCompletion>>();
+  for (const completion of completions) {
+    const key = `${completion.task_id}|${completion.occurrence_date}`;
+    const users = completedByOccurrence.get(key) ?? new Map<string, OccurrenceCompletion>();
+    users.set(completion.user_id, completion);
+    completedByOccurrence.set(key, users);
+  }
+
+  const today = startOfDay(now);
+  const expanded: Task[] = [];
+  for (const task of tasks) {
+    if (!isRecurring(task.frequency) || task.status === 'completed') {
+      expanded.push(task);
+      continue;
+    }
+
+    const anchor = recurrenceAnchor(task);
+    if (!anchor) {
+      expanded.push(task);
+      continue;
+    }
+
+    let cursor = addDays(anchor, -1);
+    const nextAfterToday = nextOccurrence(task, today);
+    const through = nextAfterToday ?? today;
+    let firstOccurrence = true;
+    for (let i = 0; i < 10000; i++) {
+      const occurrence = nextOccurrence(task, cursor);
+      if (!occurrence || occurrence > through) break;
+      const occurrenceDate = format(occurrence, 'yyyy-MM-dd');
+      const key = `${task.id}|${occurrenceDate}`;
+      const userCompletions = completedByOccurrence.get(key);
+      const assignments: TaskAssignment[] = (task.assignments ?? []).map((assignment) => {
+        const completion = userCompletions?.get(assignment.user_id);
+        return {
+          ...assignment,
+          completed: !!completion?.completed,
+          completed_at: completion?.completed_at ?? null,
+          completion_note: completion?.completion_note ?? null,
+          completed_by: completion?.completed_by ?? null,
+        };
+      });
+      const allComplete = assignments.length > 0
+        ? assignments.every((assignment) => assignment.completed)
+        : Array.from(userCompletions?.values() ?? []).some((completion) => completion.completed);
+      expanded.push({
+        ...task,
+        id: `${task.id}::occurrence::${occurrenceDate}`,
+        series_id: task.id,
+        series_due_date: task.due_date,
+        occurrence_date: occurrenceDate,
+        is_first_occurrence: firstOccurrence,
+        due_date: `${occurrenceDate}T09:00:00.000Z`,
+        status: allComplete ? 'completed' : 'pending',
+        completed_at: allComplete
+          ? assignments.map((assignment) => assignment.completed_at).filter(Boolean).sort().slice(-1)[0] ?? null
+          : null,
+        completed_by: allComplete ? assignments[0]?.completed_by ?? null : null,
+        completion_note: allComplete ? assignments[0]?.completion_note ?? null : null,
+        assignments,
+      });
+      firstOccurrence = false;
+      cursor = occurrence;
+    }
+  }
+  return expanded;
+}
+
+export function occurrenceIdentity(id: string): { taskId: string; date: string } | null {
+  const marker = '::occurrence::';
+  const index = id.lastIndexOf(marker);
+  if (index < 0) return null;
+  return { taskId: id.slice(0, index), date: id.slice(index + marker.length) };
+}
+
+/**
  * Resolve the *effective* status of a task right now.
  *  • completed            → 'completed'
  *  • non-recurring        → 'overdue' when the due date already passed
@@ -168,6 +263,10 @@ export function upcomingOccurrences(
 export function resolveTaskStatus(task: any, now: Date = new Date()): 'completed' | 'pending' | 'overdue' {
   if (task.status === 'completed') return 'completed';
   const today = startOfDay(now);
+  if (task.occurrence_date) {
+    const due = startOfDaySafe(parseISO(task.occurrence_date));
+    return due < today ? 'overdue' : 'pending';
+  }
 
   // Any stored status other than 'completed'/'pending' (legacy 'in-progress',
   // null, stale values) is treated as PENDING so it always lands on the

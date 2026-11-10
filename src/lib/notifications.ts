@@ -124,7 +124,12 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
       // --- Assigned (recent) ---
       const createdMs = t.created_at ? new Date(t.created_at).getTime() : 0;
       const assignedByMe = t.assigned_by === userId;
-      if (createdMs && now - createdMs < 7 * DAY_MS && !assignedByMe) {
+      if (
+        createdMs &&
+        now - createdMs < 7 * DAY_MS &&
+        !assignedByMe &&
+        (!t.occurrence_date || t.is_first_occurrence)
+      ) {
         const who = t.assignee?.full_name ?? 'a administrator';
         out.push({
           id: pushId('assigned'),

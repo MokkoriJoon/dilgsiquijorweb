@@ -107,6 +107,14 @@ export interface AssigneeSlice {
 
 export interface Task {
   id: string;
+  /** Source task id when this row represents one generated recurrence date. */
+  series_id?: string;
+  /** Template due date retained for editing the recurrence series. */
+  series_due_date?: string | null;
+  /** Local calendar date for this generated occurrence (yyyy-MM-dd). */
+  occurrence_date?: string;
+  /** True only for the first generated date in a recurring series. */
+  is_first_occurrence?: boolean;
   title: string;
   description: string | null;
   due_date: string | null;
