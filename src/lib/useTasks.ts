@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { format, isBefore, startOfDay, parseISO } from 'date-fns';
+import { addDays, format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import { friendlyDbError } from './dbErrors';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
@@ -431,6 +431,9 @@ export function useTasks(profile: Profile | null) {
     },
   ) => {
     const payload: Record<string, any> = { ...patch, updated_at: new Date().toISOString() };
+    if (patch.due_date !== undefined && patch.start_date === undefined) {
+      payload.start_date = patch.due_date;
+    }
     if (patch.status === 'completed') {
       payload.completed_at = new Date().toISOString();
       payload.completed_by = profile?.id ?? null;
@@ -791,16 +794,17 @@ export function useTasks(profile: Profile | null) {
 }
 
 /** The date a task is effectively due right now (next unfinished occurrence). */
-export function effectiveDueDate(t: Task): string {
-  const today = startOfDay(new Date());
+export function effectiveDueDate(t: Task, now: Date = new Date()): string {
+  const today = startOfDay(now);
   if (t.status === 'completed') return (t.due_date ?? '9999-12-31').slice(0, 10);
   if (t.frequency === 'one-time' || !t.due_date) {
     return (t.due_date ?? '9999-12-31').slice(0, 10);
   }
-  const stored = t.due_date.slice(0, 10);
-  if (isBefore(parseISO(stored), today)) return stored; // already overdue → sorts first
-  const nxt = nextOccurrence(t, today);
-  return nxt ? format(nxt, 'yyyy-MM-dd') : stored;
+  const anchor = t.start_date ?? t.due_date;
+  const firstDue = nextOccurrence(t, addDays(startOfDay(parseISO(anchor.slice(0, 10))), -1));
+  if (firstDue && isBefore(firstDue, today)) return format(firstDue, 'yyyy-MM-dd');
+  const nxt = nextOccurrence(t, addDays(today, -1));
+  return nxt ? format(nxt, 'yyyy-MM-dd') : (firstDue ? format(firstDue, 'yyyy-MM-dd') : anchor.slice(0, 10));
 }
 
 /**
@@ -809,7 +813,7 @@ export function effectiveDueDate(t: Task): string {
  * Used by the reminder/notification system ("due 1 day before", "overdue").
  */
 export function daysUntilEffectiveDeadline(t: Task, now: Date = new Date()): number | null {
-  const due = effectiveDueDate(t);
+  const due = effectiveDueDate(t, now);
   if (!due || due === '9999-12-31') return null;
   const dueDay = startOfDay(parseISO(due));
   return Math.round((dueDay.getTime() - startOfDay(now).getTime()) / 86_400_000);

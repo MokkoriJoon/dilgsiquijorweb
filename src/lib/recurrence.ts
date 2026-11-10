@@ -50,39 +50,65 @@ export function nextOccurrence(
   input: {
     frequency?: TaskFrequency | null;
     due_date?: string | null;
+    start_date?: string | null;
     days_of_week?: number[] | null;
     repeat_forever?: boolean | null;
+  },
+  from: Date,
+): Date | null {
+  const first = findNextOccurrence(input, from);
+  if (!first || input.repeat_forever !== false) return first;
+
+  const anchor = recurrenceAnchor(input);
+  if (!anchor) return first;
+  const initial = findNextOccurrence(input, addDays(anchor, -1));
+  return initial && first.getTime() === initial.getTime() ? first : null;
+}
+
+function recurrenceAnchor(input: {
+  due_date?: string | null;
+  start_date?: string | null;
+}): Date | null {
+  const date = input.start_date ?? input.due_date;
+  return date ? startOfDaySafe(parseISO(date.slice(0, 10))) : null;
+}
+
+function findNextOccurrence(
+  input: {
+    frequency?: TaskFrequency | null;
+    due_date?: string | null;
+    start_date?: string | null;
+    days_of_week?: number[] | null;
   },
   from: Date,
 ): Date | null {
   const freq = input.frequency ?? 'one-time';
   if (freq === 'one-time') return null;
 
-  const baseDate = input.due_date ? startOfDaySafe(parseISO(input.due_date.slice(0, 10))) : null;
-  const floor = addDays(startOfDay(from), 1); // occurrences strictly after `from`
-
-  const withinLimit = (d: Date) => (input.repeat_forever ? true : !baseDate || d >= baseDate);
+  const baseDate = recurrenceAnchor(input);
+  const afterFrom = addDays(startOfDay(from), 1); // occurrences strictly after `from`
+  const floor = baseDate && afterFrom < baseDate ? baseDate : afterFrom;
 
   switch (freq) {
     case 'daily': {
       const days = normalizeDays(input.days_of_week);
       // No specific weekdays chosen → literally every calendar day.
       if (days.length === 0) {
-        const d = new Date(floor);
-        return withinLimit(d) ? d : null;
+        return new Date(floor);
       }
       for (let i = 0; i < 371; i++) {
         const d = addDays(floor, i);
-        if (days.includes(isoWeekday(d))) return withinLimit(d) ? d : null;
+        if (days.includes(isoWeekday(d))) return d;
       }
       return null;
     }
     case 'weekly': {
       if (!baseDate) return null;
+      if (baseDate >= floor) return baseDate;
       const target = isoWeekday(baseDate);
       for (let i = 0; i < 14; i++) {
         const d = addDays(floor, i);
-        if (isoWeekday(d) === target) return withinLimit(d) ? d : null;
+        if (isoWeekday(d) === target) return d;
       }
       return null;
     }
@@ -94,9 +120,9 @@ export function nextOccurrence(
       const step = freq === 'quarterly' ? 3 : freq === 'semester' ? 6 : freq === 'yearly' ? 12 : 1;
       const dom = baseDate.getDate();
       for (let k = 0; k <= 600; k++) {
-        const raw = addMonths(baseDate, step * (k + 1));
+        const raw = addMonths(baseDate, step * k);
         const clamped = clampToMonth(raw.getFullYear(), raw.getMonth(), dom);
-        if (clamped >= floor) return withinLimit(clamped) ? clamped : null;
+        if (clamped >= floor) return clamped;
       }
       return null;
     }
@@ -137,7 +163,7 @@ export function upcomingOccurrences(
  * Resolve the *effective* status of a task right now.
  *  • completed            → 'completed'
  *  • non-recurring        → 'overdue' when the due date already passed
- *  • recurring            → evaluated against the latest occurrence ≤ today
+ *  • recurring            → overdue if any scheduled occurrence before today
  */
 export function resolveTaskStatus(task: any, now: Date = new Date()): 'completed' | 'pending' | 'overdue' {
   if (task.status === 'completed') return 'completed';
@@ -159,21 +185,11 @@ export function resolveTaskStatus(task: any, now: Date = new Date()): 'completed
     return due < today ? 'overdue' : 'pending';
   }
 
-  // Find the most recent occurrence that is due today or earlier.
-  let latest: Date | null = null;
-  if (task.due_date) {
-    const base = startOfDaySafe(parseISO(String(task.due_date).slice(0, 10)));
-    if (base <= today) latest = base;
-  }
-  let probe = latest ?? startOfDaySafe(parseISO(String(task.due_date ?? today).slice(0, 10)));
-  for (let i = 0; i < 800; i++) {
-    const nxt = nextOccurrence(task, probe);
-    if (!nxt || nxt > today) break;
-    latest = nxt;
-    probe = nxt;
-  }
-  if (!latest) return 'pending';
-  return latest < today ? 'overdue' : 'pending';
+  const anchor = recurrenceAnchor(task);
+  if (!anchor) return 'pending';
+  const firstDue = nextOccurrence(task, addDays(anchor, -1));
+  if (!firstDue || firstDue > today) return 'pending';
+  return firstDue < today ? 'overdue' : 'pending';
 }
 
 /** Human summary of the recurrence rule, e.g. "Daily · Mon–Fri". */

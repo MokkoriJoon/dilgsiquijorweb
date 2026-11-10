@@ -28,7 +28,7 @@ import { resolveTaskStatus } from '../lib/recurrence';
 import { useAuth } from '../lib/useAuth';
 import { useSiteBranding } from '../lib/siteSettings';
 import { STATUS_META, FREQUENCY_OPTIONS, frequencyLabel } from '../lib/taskMeta';
-import { formatDueDate } from '../lib/useTasks';
+import { daysUntilEffectiveDeadline, effectiveDueDate, formatDueDate } from '../lib/useTasks';
 import type { Task, TaskFrequency } from '../lib/types';
 
 /** Status-card filter used by the clickable dashboard cards. */
@@ -563,13 +563,11 @@ export default function PublicDashboard() {
 }
 
 function daysUntilDue(t: Task): number | null {
-  const due = (t.due_date ?? '').slice(0, 10);
-  if (!due) return null;
-  const dd = Math.round(
-    (new Date(`${due}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) /
-      86_400_000,
-  );
-  return dd;
+  return daysUntilEffectiveDeadline(t);
+}
+
+function effectiveDueLabel(t: Task): string {
+  return formatDueDate(t.due_date ? effectiveDueDate(t) : null);
 }
 
 function SummaryCard({
@@ -668,7 +666,7 @@ function AssignmentRow({ slice }: { slice: AssignmentSlice }) {
       >
         {t.title}
       </h3>
-      <p className="text-xs text-gray-500 mt-1">Due: {formatDueDate(t.due_date)}</p>
+      <p className="text-xs text-gray-500 mt-1">Due: {effectiveDueLabel(t)}</p>
       <p className="text-xs text-gray-700 mt-2 flex items-center gap-1 flex-wrap">
         <Users size={12} className="text-gray-400" />
         <span className="font-semibold">{name}</span>
@@ -748,7 +746,7 @@ function Bucket({
               </div>
               <h3 className="font-semibold text-gray-800 text-sm leading-snug">{t.title}</h3>
               <p className="text-xs text-gray-500 mt-1">
-                Due: {formatDueDate(t.due_date)}
+                Due: {effectiveDueLabel(t)}
               </p>
               <p className="text-xs text-gray-600 mt-2 flex items-center gap-1">
                 <Users size={12} className="text-gray-400" />
@@ -867,7 +865,7 @@ function FrequencyBrowser({
                       )}
                     </div>
                     <h3 className="font-semibold text-gray-800 text-sm leading-snug">{t.title}</h3>
-                    <p className="text-xs text-gray-500 mt-1">Due: {formatDueDate(t.due_date)}</p>
+                    <p className="text-xs text-gray-500 mt-1">Due: {effectiveDueLabel(t)}</p>
                     <p className="text-xs text-gray-600 mt-2 flex items-center gap-1">
                       <Users size={12} className="text-gray-400" />
                       {(t.assignee_profiles ?? [])

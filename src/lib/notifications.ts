@@ -11,7 +11,7 @@
 // twice for the same event on the same day.
 // =====================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { daysUntilEffectiveDeadline } from './useTasks';
+import { daysUntilEffectiveDeadline, effectiveDueDate, formatDueDate } from './useTasks';
 import type { Profile, Task } from './types';
 
 export type NotifKind = 'assigned' | 'due-today' | 'due-soon' | 'overdue';
@@ -117,6 +117,8 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
     if (!mine) continue;
 
     const pushId = (kind: string) => `${kind}:${t.id}|d=${today}|t=${now}`;
+    const effectiveDue = effectiveDueDate(t);
+    const dueLabel = effectiveDue === '9999-12-31' ? t.due_date : effectiveDue;
 
     if (t.status !== 'completed') {
       // --- Assigned (recent) ---
@@ -143,7 +145,7 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
             kind: 'overdue',
             taskId: t.id,
             title: '🚨 OVERDUE task — act immediately',
-            body: `“${t.title}” was due on ${fmtDue(t.due_date)} — overdue by ${Math.abs(dd)} day(s).`,
+            body: `“${t.title}” was due on ${fmtDue(dueLabel)} — overdue by ${Math.abs(dd)} day(s).`,
             createdAt: now,
           });
         } else if (dd === 0) {
@@ -156,7 +158,7 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
             kind: 'due-today',
             taskId: t.id,
             title: '📅 Due today',
-            body: `“${t.title}” is due today (${fmtDue(t.due_date)}). Finish it before end of day.`,
+            body: `“${t.title}” is due today (${fmtDue(dueLabel)}). Finish it before end of day.`,
             createdAt: now,
           });
         } else if (dd === 1) {
@@ -165,7 +167,7 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
             kind: 'due-soon',
             taskId: t.id,
             title: '⏰ Due tomorrow',
-            body: `“${t.title}” is due on ${fmtDue(t.due_date)} (1 day left).`,
+            body: `“${t.title}” is due on ${fmtDue(dueLabel)} (1 day left).`,
             createdAt: now,
           });
         }
@@ -183,8 +185,7 @@ export function buildNotifications(tasks: Task[], userId: string): AppNotificati
 
 function fmtDue(due?: string | null): string {
   if (!due) return '(no date)';
-  const d = new Date(due);
-  return isNaN(d.getTime()) ? due.slice(0, 10) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDueDate(due);
 }
 
 /* ══════════════════════════ OVERDUE LOGIN POP-UP ══════════════════════════
