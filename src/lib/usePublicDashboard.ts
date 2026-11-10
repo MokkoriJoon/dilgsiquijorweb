@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from './supabase';
-import { toTitleCase } from './case';
+import { normalizeProfileNameFields, toTitleCase } from './case';
 import { friendlyDbError } from './dbErrors';
 import { useRealtimeTableChanges } from './realtime';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskLink } from './types';
@@ -68,7 +68,7 @@ export function usePublicDashboard() {
     else setError(null);
 
     const pmap = new Map<string, Profile>();
-    ((profilesRes.data ?? []) as Profile[]).forEach((p) => pmap.set(p.id, p));
+    ((profilesRes.data ?? []) as Profile[]).map(normalizeProfileNameFields).forEach((p) => pmap.set(p.id, p));
     setProfiles(Array.from(pmap.values()));
 
     const catMap = new Map<string, TaskCategory>();
