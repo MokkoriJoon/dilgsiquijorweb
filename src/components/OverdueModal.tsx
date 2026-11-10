@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CalendarX2, CheckCircle2, Clock, ListChecks, X } from 'lucide-react';
 import type { Task } from '../lib/types';
-import { effectiveDueDate } from '../lib/useTasks';
+import { effectiveDueDate, formatDueDate } from '../lib/useTasks';
 import { overdueDaysLabel } from '../lib/notifications';
 
 /** Days a task has slipped past its effective deadline (0 when unknown). */
@@ -35,14 +35,6 @@ export interface OverdueModalProps {
   onClose: () => void;
   /** The signed-in user's overdue tasks (non-empty). */
   tasks: Task[];
-}
-
-function fmtDue(due?: string | null): string {
-  if (!due) return '(no date)';
-  const d = new Date(due);
-  return isNaN(d.getTime())
-    ? due.slice(0, 10)
-    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export default function OverdueModal({ open, onClose, tasks }: OverdueModalProps) {
@@ -144,7 +136,7 @@ export default function OverdueModal({ open, onClose, tasks }: OverdueModalProps
                           <Clock size={11} className="text-red-500" />
                           <span className="font-bold text-red-600">{overdueDaysLabel(t)}</span>
                         </span>
-                        <span>Due: {fmtDue(due)}</span>
+                        <span>Due: {formatDueDate(due)}</span>
                         {t.category?.name && (
                           <span className="rounded-full bg-white px-2 py-0.5 font-medium text-gray-600 border border-gray-200">
                             {t.category.name}

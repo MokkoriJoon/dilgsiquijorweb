@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../lib/types';
 import { STATUS_META } from '../lib/taskMeta';
-import { describeRecurrence, nextOccurrence, daysUntil, resolveTaskStatus } from '../lib/recurrence';
-import { formatDueDate } from '../lib/useTasks';
+import { describeRecurrence, nextOccurrence, resolveTaskStatus } from '../lib/recurrence';
+import { daysUntilEffectiveDeadline, effectiveDueDate, formatDueDate } from '../lib/useTasks';
 import { CalendarDays, RefreshCw, Link2, Users, AlertTriangle } from 'lucide-react';
 
 /**
@@ -52,9 +52,10 @@ export function RecurrenceBadge({ task }: { task: Task }) {
 }
 
 export function DueBadge({ task, status }: { task: Task; status: 'completed' | 'pending' | 'overdue' }) {
-  const remaining = daysUntil(task.due_date);
+  const remaining = daysUntilEffectiveDeadline(task);
   const overdueBy = status === 'overdue' && remaining !== null ? Math.abs(remaining) : null;
   const dueSoon = status === 'pending' && remaining !== null && remaining >= 0 && remaining <= 3;
+  const dueDate = task.due_date ? effectiveDueDate(task) : null;
 
   let tone = 'text-gray-500';
   if (status === 'overdue') tone = 'text-red-600 font-semibold';
@@ -63,9 +64,7 @@ export function DueBadge({ task, status }: { task: Task; status: 'completed' | '
   return (
     <span className={`inline-flex items-center gap-1 ${tone}`}>
       <CalendarDays size={12} />
-      {status === 'completed'
-        ? `Due ${formatDueDate(task.due_date)}`
-        : `Due ${formatDueDate(task.due_date)}`}
+      Due {formatDueDate(dueDate)}
       {overdueBy !== null && overdueBy > 0 && (
         <span className="text-[10px] rounded bg-red-100 px-1 py-0.5">
           {overdueBy} day{overdueBy === 1 ? '' : 's'} overdue
