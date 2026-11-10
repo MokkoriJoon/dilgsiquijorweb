@@ -127,8 +127,8 @@ export default function ProfileModal({
   };
 
   const rows = [
-    { icon: User, label: 'Full Name', value: profile.full_name ?? '—' },
-    { icon: Briefcase, label: 'Position / Designation', value: profile.position ?? '—' },
+    { icon: User, label: 'Full Name', value: toTitleCase(profile.full_name) || '—' },
+    { icon: Briefcase, label: 'Position / Designation', value: toTitleCase(profile.position) || '—' },
     { icon: Mail, label: 'Email', value: profile.email ?? '—' },
     { icon: CalendarDays, label: 'Date Created', value: formatDateTime(profile.created_at) },
   ];
@@ -167,7 +167,7 @@ export default function ProfileModal({
               )}
             </div>
             <div className="min-w-0">
-              <h2 className="font-bold text-gray-800 truncate">{profile.full_name ?? 'Staff Member'}</h2>
+              <h2 className="font-bold text-gray-800 truncate">{toTitleCase(profile.full_name) || 'Staff Member'}</h2>
               <span
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold mt-0.5 ${ROLE_BADGE_CLASSES[profile.role]}`}
               >

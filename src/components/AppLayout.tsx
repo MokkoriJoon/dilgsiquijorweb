@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
+import { toTitleCase } from '../lib/case';
 import { useTasks } from '../lib/useTasks';
 import { useAnnouncements } from '../lib/useAnnouncements';
 import { useAnnouncementPopup } from '../lib/useAnnouncementPopup';
@@ -167,7 +168,7 @@ export default function AppLayout() {
           <Avatar name={profile.full_name} src={profile.avatar_url} size={40} />
           <div className="min-w-0">
             <p className="text-white text-sm font-medium truncate">
-              {profile.full_name ?? 'Staff Member'}
+              {toTitleCase(profile.full_name) || 'Staff Member'}
             </p>
             <span
               className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold mt-0.5 ${ROLE_BADGE_CLASSES[role]}`}
@@ -277,7 +278,7 @@ export default function AppLayout() {
                 <p className="hidden lg:block text-sm text-gray-500 truncate">
                   Welcome back,{' '}
                   <span className="font-semibold text-gray-800">
-                    {profile.full_name?.split(' ')[0] ?? 'Staff'}
+                    {toTitleCase(profile.full_name).split(' ')[0] || 'Staff'}
                   </span>{' '}
                   · <span className="font-medium text-gray-700">{branding.name}</span>
                 </p>
@@ -327,7 +328,7 @@ export default function AppLayout() {
               >
                 <Avatar name={profile.full_name} src={profile.avatar_url} size={32} />
                 <span className="text-sm text-gray-600 hidden md:block truncate max-w-[160px]">
-                  {profile.full_name?.split(' ')[0] ?? 'Profile'}
+                  {toTitleCase(profile.full_name).split(' ')[0] || 'Profile'}
                 </span>
               </button>
             </div>

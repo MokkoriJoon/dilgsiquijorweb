@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase';
 import type { Profile, UserRole } from './types';
+import { normalizeProfileNameFields } from './case';
 
 /**
  * Loads the current logged-in user's profile from the `profiles` table.
@@ -27,19 +28,19 @@ export function useAuth() {
       if (!mounted) return;
 
       if (data) {
-        setProfile(data as Profile);
+        setProfile(normalizeProfileNameFields(data as Profile));
       } else {
         // Fallback: build a provisional profile from auth metadata
         const { data: { user } } = await supabase.auth.getUser();
         if (!mounted) return;
-        setProfile({
+        setProfile(normalizeProfileNameFields({
           id: userId,
           full_name: (user?.user_metadata?.full_name as string) ?? null,
           email: user?.email ?? null,
           position: (user?.user_metadata?.position as string) ?? null,
-          role: 'STANDARD',
+          role: 'STANDARD' as UserRole,
           is_approved: false,
-        });
+        }));
       }
       setLoading(false);
     };
@@ -91,7 +92,7 @@ export async function refreshProfile(userId: string): Promise<Profile | null> {
     .select('*')
     .eq('id', userId)
     .maybeSingle();
-  return (data as Profile) ?? null;
+  return data ? normalizeProfileNameFields(data as Profile) : null;
 }
 
 export type { Profile, UserRole };

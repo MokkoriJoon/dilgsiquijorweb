@@ -88,7 +88,11 @@ export async function fetchRegisteredUsers(): Promise<RegisteredUserOption[]> {
     .select('id,full_name,position')
     .order('full_name');
   if (res.error) return [];
-  return (res.data ?? []) as RegisteredUserOption[];
+  return ((res.data ?? []) as RegisteredUserOption[]).map((user) => ({
+    ...user,
+    full_name: user.full_name ? toTitleCase(user.full_name) : user.full_name,
+    position: user.position ? toTitleCase(user.position) : user.position,
+  }));
 }
 
 export function useAnnouncements() {

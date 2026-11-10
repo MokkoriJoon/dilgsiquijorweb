@@ -159,7 +159,11 @@ export default function UserManagement() {
     if (error) {
       setPageError(error.message);
     } else {
-      const list = (data ?? []) as Profile[];
+      const list = ((data ?? []) as Profile[]).map((user) => ({
+        ...user,
+        full_name: toTitleCase(user.full_name ?? '') || null,
+        position: toTitleCase(user.position ?? '') || null,
+      }));
       setUsers(list);
 
       // Open-task counts per user (nice-to-have; silently ignored on failure)

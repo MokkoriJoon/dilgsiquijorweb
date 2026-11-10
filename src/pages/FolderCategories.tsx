@@ -42,6 +42,7 @@ export default function FolderCategories() {
   const [nameFilter, setNameFilter] = useState('');
   const [frequencyFilter, setFrequencyFilter] = useState<TaskFrequency | ''>('');
   const [statusFilter, setStatusFilter] = useState<'pending' | 'overdue' | 'completed' | ''>('');
+  const [myTasksOnly, setMyTasksOnly] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
 
   const folders = [
@@ -55,24 +56,33 @@ export default function FolderCategories() {
     const needle = nameFilter.trim().toLocaleLowerCase();
     return source.filter((task) => {
       if (task.category_id !== selected.id) return false;
+      if (
+        myTasksOnly &&
+        task.assigned_to !== profile.id &&
+        !(task.assignees ?? []).includes(profile.id)
+      ) {
+        return false;
+      }
       if (needle && !task.title.toLocaleLowerCase().includes(needle)) return false;
       if (frequencyFilter && task.frequency !== frequencyFilter) return false;
       if (statusFilter && t.statusOf(task) !== statusFilter) return false;
       return true;
     });
-  }, [selected, t.personalTasks, t.orgTasks, t.statusOf, nameFilter, frequencyFilter, statusFilter]);
+  }, [selected, t.personalTasks, t.orgTasks, t.statusOf, nameFilter, frequencyFilter, statusFilter, myTasksOnly, profile.id]);
 
   function openFolder(id: string, name: string, personal: boolean) {
     setSelected({ id, name, personal });
     setNameFilter('');
     setFrequencyFilter('');
     setStatusFilter('');
+    setMyTasksOnly(false);
   }
 
   function clearFilters() {
     setNameFilter('');
     setFrequencyFilter('');
     setStatusFilter('');
+    setMyTasksOnly(false);
   }
 
   async function handleSubmit(draft: Parameters<typeof draftToPayload>[0]) {
@@ -244,7 +254,7 @@ export default function FolderCategories() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white rounded-xl border border-gray-100 p-4 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white rounded-xl border border-gray-100 p-4 mb-4">
             <label className="text-xs font-medium text-gray-600">
               Name
               <span className="relative block mt-1">
@@ -289,11 +299,20 @@ export default function FolderCategories() {
                 <option value="completed">Completed</option>
               </select>
             </label>
-            {(nameFilter || frequencyFilter || statusFilter) && (
+            <label className="flex items-center gap-2 self-end rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={myTasksOnly}
+                onChange={(event) => setMyTasksOnly(event.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              My Tasks Only
+            </label>
+            {(nameFilter || frequencyFilter || statusFilter || myTasksOnly) && (
               <button
                 type="button"
                 onClick={clearFilters}
-                className="sm:col-span-3 justify-self-start text-xs font-semibold text-blue-700 hover:underline"
+                className="lg:col-span-4 justify-self-start text-xs font-semibold text-blue-700 hover:underline"
               >
                 Clear filters
               </button>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { addDays, format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import { friendlyDbError } from './dbErrors';
-import { toTitleCase } from './case';
+import { normalizeProfileNameFields, toTitleCase } from './case';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
 import { isAdminOrAbove } from '../lib/types';
 import {
@@ -63,8 +63,9 @@ export function useTasks(profile: Profile | null) {
 
     const pmap = new Map<string, Profile>();
     if (!profilesRes.error) {
-      ((profilesRes.data ?? []) as Profile[]).forEach((p) => pmap.set(p.id, p));
-      setProfiles(profilesRes.data as Profile[]);
+      const normalizedProfiles = ((profilesRes.data ?? []) as Profile[]).map(normalizeProfileNameFields);
+      normalizedProfiles.forEach((p) => pmap.set(p.id, p));
+      setProfiles(normalizedProfiles);
     }
 
     const catMap = new Map<string, TaskCategory>();
