@@ -4,7 +4,7 @@ import { uploadAvatar, deleteAvatars } from '../lib/avatar';
 import Avatar from './Avatar';
 import type { Profile } from '../lib/types';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
-import { toTitleCase } from '../lib/case';
+import { toProfileTitleCase } from '../lib/case';
 import { X, User, Mail, Briefcase, ShieldCheck, CalendarDays, Hash, Camera, Loader2, Trash2 } from 'lucide-react';
 
 function formatDateTime(iso?: string | null): string {
@@ -90,8 +90,8 @@ export default function ProfileModal({
       }
 
       const patch = {
-        full_name: toTitleCase(fullName),
-        position: toTitleCase(position) || null,
+        full_name: toProfileTitleCase(fullName),
+        position: toProfileTitleCase(position) || null,
         avatar_url: nextAvatar,
       };
 
@@ -127,8 +127,8 @@ export default function ProfileModal({
   };
 
   const rows = [
-    { icon: User, label: 'Full Name', value: toTitleCase(profile.full_name) || '—' },
-    { icon: Briefcase, label: 'Position / Designation', value: toTitleCase(profile.position) || '—' },
+    { icon: User, label: 'Full Name', value: toProfileTitleCase(profile.full_name) || '—' },
+    { icon: Briefcase, label: 'Position / Designation', value: toProfileTitleCase(profile.position) || '—' },
     { icon: Mail, label: 'Email', value: profile.email ?? '—' },
     { icon: CalendarDays, label: 'Date Created', value: formatDateTime(profile.created_at) },
   ];
@@ -167,7 +167,7 @@ export default function ProfileModal({
               )}
             </div>
             <div className="min-w-0">
-              <h2 className="font-bold text-gray-800 truncate">{toTitleCase(profile.full_name) || 'Staff Member'}</h2>
+              <h2 className="font-bold text-gray-800 truncate">{toProfileTitleCase(profile.full_name) || 'Staff Member'}</h2>
               <span
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold mt-0.5 ${ROLE_BADGE_CLASSES[profile.role]}`}
               >
@@ -235,6 +235,7 @@ export default function ProfileModal({
               <input
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
+                onBlur={(e) => setFullName(toProfileTitleCase(e.currentTarget.value))}
                 placeholder="Juan Dela Cruz"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
               />
@@ -248,6 +249,7 @@ export default function ProfileModal({
               <input
                 value={position}
                 onChange={(e) => setPosition(e.target.value)}
+                onBlur={(e) => setPosition(toProfileTitleCase(e.currentTarget.value))}
                 placeholder="e.g., Administrative Officer"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
               />

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { emailRateLimitMessage } from '../lib/authErrors';
-import { toTitleCase } from '../lib/case';
+import { toProfileTitleCase } from '../lib/case';
 import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
 import { useSiteBranding } from '../lib/siteSettings';
 import { BrandLogo } from './Login';
@@ -87,8 +87,8 @@ export default function Register() {
         password,
         options: {
           data: {
-            full_name: toTitleCase(fullName),
-            position: toTitleCase(position),
+            full_name: toProfileTitleCase(fullName),
+            position: toProfileTitleCase(position),
             role: 'STANDARD',
           },
         },
@@ -179,6 +179,7 @@ export default function Register() {
                       type="text"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
+                      onBlur={(e) => setFullName(toProfileTitleCase(e.currentTarget.value))}
                       placeholder="Juan Dela Cruz"
                       className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
@@ -215,6 +216,7 @@ export default function Register() {
                       type="text"
                       value={position}
                       onChange={(e) => setPosition(e.target.value)}
+                      onBlur={(e) => setPosition(toProfileTitleCase(e.currentTarget.value))}
                       placeholder="e.g., Administrative Officer"
                       className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
