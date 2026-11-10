@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { emailRateLimitMessage } from '../lib/authErrors';
 import type { Profile, UserRole } from '../lib/types';
 import { USER_ROLES, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
-import { toTitleCase } from '../lib/case';
+import { toProfileTitleCase } from '../lib/case';
 import {
   Users,
   Plus,
@@ -161,8 +161,8 @@ export default function UserManagement() {
     } else {
       const list = ((data ?? []) as Profile[]).map((user) => ({
         ...user,
-        full_name: toTitleCase(user.full_name ?? '') || null,
-        position: toTitleCase(user.position ?? '') || null,
+        full_name: toProfileTitleCase(user.full_name ?? '') || null,
+        position: toProfileTitleCase(user.position ?? '') || null,
       }));
       setUsers(list);
 
@@ -260,8 +260,8 @@ export default function UserManagement() {
     setFormError('');
 
     // Names / positions are stored with an Uppercase First Letter.
-    const cleanName = toTitleCase(form.full_name);
-    const cleanPosition = toTitleCase(form.position);
+    const cleanName = toProfileTitleCase(form.full_name);
+    const cleanPosition = toProfileTitleCase(form.position);
 
     if (!cleanName) return setFormError('Full name is required.');
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
@@ -473,7 +473,7 @@ export default function UserManagement() {
                         </div>
                         <div className="min-w-0">
                           <p className="font-medium text-gray-800 truncate">
-                            {toTitleCase(user.full_name ?? '') || '—'}
+                            {toProfileTitleCase(user.full_name ?? '') || '—'}
                             {user.id === profile.id && (
                               <span className="ml-2 text-[10px] text-blue-600 font-semibold">
                                 (You)
@@ -485,7 +485,7 @@ export default function UserManagement() {
                       </div>
                     </td>
                     <td className="px-5 py-4 text-gray-600">
-                      {user.position ? toTitleCase(user.position) : '—'}
+                      {user.position ? toProfileTitleCase(user.position) : '—'}
                     </td>
                     <td className="px-5 py-4">
                       <span
@@ -610,6 +610,9 @@ export default function UserManagement() {
                 <input
                   value={form.full_name}
                   onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                  onBlur={(e) =>
+                    setForm({ ...form, full_name: toProfileTitleCase(e.currentTarget.value) })
+                  }
                   placeholder="Junfranz Rock C. Calibo"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
@@ -633,6 +636,9 @@ export default function UserManagement() {
                 <input
                   value={form.position}
                   onChange={(e) => setForm({ ...form, position: e.target.value })}
+                  onBlur={(e) =>
+                    setForm({ ...form, position: toProfileTitleCase(e.currentTarget.value) })
+                  }
                   placeholder="e.g., Administrative Officer"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />

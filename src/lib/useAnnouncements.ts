@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { useRealtimeTableChanges } from './realtime';
-import { toTitleCase } from './case';
+import { toProfileTitleCase, toTitleCase } from './case';
 import type { Profile } from './types';
 
 /**
@@ -90,8 +90,8 @@ export async function fetchRegisteredUsers(): Promise<RegisteredUserOption[]> {
   if (res.error) return [];
   return ((res.data ?? []) as RegisteredUserOption[]).map((user) => ({
     ...user,
-    full_name: user.full_name ? toTitleCase(user.full_name) : user.full_name,
-    position: user.position ? toTitleCase(user.position) : user.position,
+    full_name: user.full_name ? toProfileTitleCase(user.full_name) : user.full_name,
+    position: user.position ? toProfileTitleCase(user.position) : user.position,
   }));
 }
 
@@ -130,7 +130,7 @@ export function useAnnouncements() {
         nameMap = new Map(
           ((pres.data ?? []) as Pick<Profile, 'id' | 'full_name'>[]).map((p) => [
             p.id,
-            toTitleCase(p.full_name ?? 'Staff'),
+            toProfileTitleCase(p.full_name ?? 'Staff'),
           ]),
         );
       }

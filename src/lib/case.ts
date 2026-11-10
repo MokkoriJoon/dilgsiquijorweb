@@ -2,9 +2,8 @@
  * Name / Title casing helpers.
  *
  * The app requires every NAME, TITLE and any the-like free-text label to be
- * written with an Uppercase First Letter (Title Case). These utilities are
- * applied when SAVING (so data reaches the database already normalized) —
- * never while typing, so users can still write lowercase naturally.
+ * written with an Uppercase First Letter (Title Case). Profile fields are
+ * normalized on blur and save; other labels are normalized when saved.
  */
 
 const SMALL_WORDS = new Set([
@@ -21,6 +20,23 @@ function upperFirst(token: string): string {
   const rest = m[2];
   if (!rest) return token;
   return prefix + rest[0].toUpperCase() + rest.slice(1);
+}
+
+/** Normalize profile names and designations regardless of the entered casing. */
+export function toProfileTitleCase(input?: string | null): string {
+  if (!input) return '';
+  const normalized = input.replace(/\s+/g, ' ').trim();
+  return normalized
+    .split(' ')
+    .map((word, i, arr) => {
+      if (KNOWN_ACRONYMS.has(word.toUpperCase())) return word.toUpperCase();
+      const bare = word.toLocaleLowerCase().replace(/[^a-z]/g, '');
+      if (bare && SMALL_WORDS.has(bare) && i !== 0 && i !== arr.length - 1) {
+        return word.toLocaleLowerCase();
+      }
+      return upperFirst(word.toLocaleLowerCase());
+    })
+    .join(' ');
 }
 
 /**
@@ -83,7 +99,7 @@ export function normalizeProfileNameFields<
 >(profile: T): T {
   return {
     ...profile,
-    full_name: profile.full_name ? toTitleCase(profile.full_name) : profile.full_name,
-    position: profile.position ? toTitleCase(profile.position) : profile.position,
+    full_name: profile.full_name ? toProfileTitleCase(profile.full_name) : profile.full_name,
+    position: profile.position ? toProfileTitleCase(profile.position) : profile.position,
   };
 }
