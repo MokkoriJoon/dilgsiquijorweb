@@ -4,6 +4,7 @@ import { uploadAvatar, deleteAvatars } from '../lib/avatar';
 import Avatar from './Avatar';
 import type { Profile } from '../lib/types';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
+import { toTitleCase } from '../lib/case';
 import { X, User, Mail, Briefcase, ShieldCheck, CalendarDays, Hash, Camera, Loader2, Trash2 } from 'lucide-react';
 
 function formatDateTime(iso?: string | null): string {
@@ -89,8 +90,8 @@ export default function ProfileModal({
       }
 
       const patch = {
-        full_name: fullName.trim(),
-        position: position.trim() || null,
+        full_name: toTitleCase(fullName),
+        position: toTitleCase(position) || null,
         avatar_url: nextAvatar,
       };
 

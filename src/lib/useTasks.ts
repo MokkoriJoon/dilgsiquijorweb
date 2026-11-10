@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { addDays, format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import { friendlyDbError } from './dbErrors';
+import { toTitleCase } from './case';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskFrequency, TaskLink } from '../lib/types';
 import { isAdminOrAbove } from '../lib/types';
 import {
@@ -68,8 +69,12 @@ export function useTasks(profile: Profile | null) {
 
     const catMap = new Map<string, TaskCategory>();
     if (!catsRes.error) {
-      ((catsRes.data ?? []) as TaskCategory[]).forEach((c) => catMap.set(c.id, c));
-      setCategories((catsRes.data ?? []) as TaskCategory[]);
+      const normalizedCategories = ((catsRes.data ?? []) as TaskCategory[]).map((category) => ({
+        ...category,
+        name: toTitleCase(category.name),
+      }));
+      normalizedCategories.forEach((c) => catMap.set(c.id, c));
+      setCategories(normalizedCategories);
     }
 
     const linkMap = new Map<string, TaskLink[]>();
@@ -130,6 +135,7 @@ export function useTasks(profile: Profile | null) {
           : rawRows;
         return {
           ...r,
+          title: toTitleCase(r.title),
           days_of_week: Array.isArray(r.days_of_week) ? r.days_of_week : [],
           repeat_forever: !!r.repeat_forever,
           assignees,
@@ -411,7 +417,7 @@ export function useTasks(profile: Profile | null) {
     const dueIso = input.due_date ? new Date(input.due_date).toISOString() : null;
 
     const row: Record<string, any> = {
-      title: input.title.trim(),
+      title: toTitleCase(input.title),
       description: input.description?.trim() || null,
       due_date: dueIso,
       start_date: dueIso,
@@ -486,6 +492,7 @@ export function useTasks(profile: Profile | null) {
     }
 
     const payload: Record<string, any> = { ...patch, updated_at: new Date().toISOString() };
+    if (patch.title !== undefined) payload.title = toTitleCase(patch.title);
     if (occurrence && patch.status) {
       delete payload.status;
       delete payload.completed_at;
@@ -813,7 +820,7 @@ export function useTasks(profile: Profile | null) {
     }
 
     const { error: err } = await supabase.from('task_categories').insert({
-      name: input.name.trim(),
+      name: toTitleCase(input.name),
       color: input.color ?? null,
       description: input.description?.trim() || null,
       created_by: profile?.id ?? null,
@@ -854,7 +861,7 @@ export function useTasks(profile: Profile | null) {
       }
     }
     const clean: Record<string, any> = {};
-    if (patch.name !== undefined) clean.name = patch.name.trim();
+    if (patch.name !== undefined) clean.name = toTitleCase(patch.name);
     if (patch.description !== undefined) clean.description = patch.description?.trim() || null;
     if (patch.color !== undefined) clean.color = patch.color || null;
 

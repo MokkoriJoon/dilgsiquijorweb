@@ -3,6 +3,7 @@ import { Link2, CheckCircle2, RotateCcw, Pencil, Trash2, AlertTriangle, ShieldAl
 import type { Task } from '../lib/types';
 import { StatusBadge, CategoryBadge, RecurrenceBadge, DueBadge, AssigneeList, NextRunHint } from './TaskBadges';
 import { formatDueDate } from '../lib/useTasks';
+import { toTitleCase } from '../lib/case';
 
 /**
  * One row/card in any task list.
@@ -84,7 +85,7 @@ export default function TaskCard({
               status === 'completed' ? 'line-through text-gray-400' : ''
             }`}
           >
-            {task.title}
+            {toTitleCase(task.title)}
           </h3>
           {task.description && (
             <p className="text-sm text-gray-500 mt-1 line-clamp-2">{task.description}</p>

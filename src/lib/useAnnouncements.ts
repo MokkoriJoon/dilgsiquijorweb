@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { useRealtimeTableChanges } from './realtime';
+import { toTitleCase } from './case';
 import type { Profile } from './types';
 
 /**
@@ -108,7 +109,10 @@ export function useAnnouncements() {
       return;
     }
     setError(null);
-    const rows = (res.data ?? []) as Announcement[];
+    const rows = ((res.data ?? []) as Announcement[]).map((row) => ({
+      ...row,
+      title: toTitleCase(row.title),
+    }));
 
     // Resolve author names (best-effort; public profile fields only).
     const authorIds = [...new Set(rows.map((r) => r.author_id).filter(Boolean))] as string[];
@@ -122,7 +126,7 @@ export function useAnnouncements() {
         nameMap = new Map(
           ((pres.data ?? []) as Pick<Profile, 'id' | 'full_name'>[]).map((p) => [
             p.id,
-            p.full_name ?? 'Staff',
+            toTitleCase(p.full_name ?? 'Staff'),
           ]),
         );
       }
@@ -166,7 +170,7 @@ export function useAnnouncements() {
       input: { title: string; body: string; authorId: string | null; is_visible?: boolean } & AnnouncementDetails,
     ) => {
       const { error: err } = await supabase.from('announcements').insert({
-        title: input.title.trim(),
+        title: toTitleCase(input.title),
         // WHAT is required, but the message/5W1H parts are optional.
         body: input.body.trim(),
         author_id: input.authorId,
@@ -192,7 +196,7 @@ export function useAnnouncements() {
       const { error: err } = await supabase
         .from('announcements')
         .update({
-          title: input.title.trim(),
+          title: toTitleCase(input.title),
           body: input.body.trim(),
           updated_at: new Date().toISOString(),
           whois: input.whois?.trim() || null,

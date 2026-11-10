@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from './supabase';
+import { toTitleCase } from './case';
 import { friendlyDbError } from './dbErrors';
 import { useRealtimeTableChanges } from './realtime';
 import type { Profile, Task, TaskAssignment, TaskCategory, TaskLink } from './types';
@@ -71,8 +72,12 @@ export function usePublicDashboard() {
     setProfiles(Array.from(pmap.values()));
 
     const catMap = new Map<string, TaskCategory>();
-    ((catsRes.data ?? []) as TaskCategory[]).forEach((c) => catMap.set(c.id, c));
-    setCategories((catsRes.data ?? []) as TaskCategory[]);
+    const normalizedCategories = ((catsRes.data ?? []) as TaskCategory[]).map((category) => ({
+      ...category,
+      name: toTitleCase(category.name),
+    }));
+    normalizedCategories.forEach((c) => catMap.set(c.id, c));
+    setCategories(normalizedCategories);
 
     const linkMap = new Map<string, TaskLink[]>();
     ((linksRes.data ?? []) as any[]).forEach((l) => {
@@ -112,6 +117,7 @@ export function usePublicDashboard() {
           : rawRows;
         return {
           ...r,
+          title: toTitleCase(r.title),
           days_of_week: Array.isArray(r.days_of_week) ? r.days_of_week : [],
           repeat_forever: !!r.repeat_forever,
           assignees,
