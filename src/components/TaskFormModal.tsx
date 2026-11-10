@@ -9,6 +9,7 @@ import {
 } from '../lib/taskMeta';
 import { NAMED_CATEGORY_COLORS } from '../lib/categoryColors';
 import { describeRecurrence } from '../lib/recurrence';
+import { toTitleCase } from '../lib/case';
 import {
   X,
   Plus,
@@ -232,7 +233,7 @@ export default function TaskFormModal({
     const { data, error: err } = await supabase
       .from('task_categories')
       .insert({
-        name,
+        name: toTitleCase(name),
         color: newCatColor,
         description: null,
         created_by: currentUserId ?? null,

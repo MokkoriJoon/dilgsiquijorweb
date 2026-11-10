@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { emailRateLimitMessage } from '../lib/authErrors';
+import { toTitleCase } from '../lib/case';
 import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
 import { useSiteBranding } from '../lib/siteSettings';
 import { BrandLogo } from './Login';
@@ -86,8 +87,8 @@ export default function Register() {
         password,
         options: {
           data: {
-            full_name: fullName.trim(),
-            position: position.trim(),
+            full_name: toTitleCase(fullName),
+            position: toTitleCase(position),
             role: 'STANDARD',
           },
         },

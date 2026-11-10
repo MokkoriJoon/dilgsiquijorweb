@@ -4,6 +4,7 @@ import type { Task } from '../lib/types';
 import { STATUS_META } from '../lib/taskMeta';
 import { describeRecurrence, nextOccurrence, resolveTaskStatus } from '../lib/recurrence';
 import { daysUntilEffectiveDeadline, effectiveDueDate, formatDueDate } from '../lib/useTasks';
+import { toTitleCase } from '../lib/case';
 import { CalendarDays, RefreshCw, Link2, Users, AlertTriangle } from 'lucide-react';
 
 /**
@@ -34,7 +35,7 @@ export function CategoryBadge({ task }: { task: Task }) {
       title={task.category.description ?? undefined}
     >
       <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
-      {task.category.name}
+      {toTitleCase(task.category.name)}
     </span>
   );
 }
@@ -126,7 +127,7 @@ export function AssigneeList({ task, overdueCount = 0 }: { task: Task; overdueCo
   };
 
   const single = people.length === 1;
-  const firstName = people[0].full_name ?? 'Staff';
+  const firstName = toTitleCase(people[0].full_name ?? 'Staff');
   const firstNameState = sliceState(people[0].id);
 
   return (
@@ -195,7 +196,7 @@ export function AssigneeList({ task, overdueCount = 0 }: { task: Task; overdueCo
                     }`}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="font-medium block truncate">{p.full_name ?? 'Staff'}</span>
+                    <span className="font-medium block truncate">                    {toTitleCase(p.full_name ?? 'Staff')}</span>
                     {p.position && <span className="text-[10px] text-gray-400 block truncate">{p.position}</span>}
                   </span>
                   <span
