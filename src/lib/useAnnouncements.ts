@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { useRealtimeTableChanges } from './realtime';
-import { toProfileTitleCase, toTitleCase } from './case';
+import { toProfilePosition, toProfileTitleCase, toTitleCase } from './case';
 import type { Profile } from './types';
 
 /**
@@ -91,7 +91,7 @@ export async function fetchRegisteredUsers(): Promise<RegisteredUserOption[]> {
   return ((res.data ?? []) as RegisteredUserOption[]).map((user) => ({
     ...user,
     full_name: user.full_name ? toProfileTitleCase(user.full_name) : user.full_name,
-    position: user.position ? toProfileTitleCase(user.position) : user.position,
+    position: user.position ? toProfilePosition(user.position) : user.position,
   }));
 }
 

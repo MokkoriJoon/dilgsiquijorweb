@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { emailRateLimitMessage } from '../lib/authErrors';
-import { toProfileTitleCase } from '../lib/case';
+import { toProfilePosition, toProfileTitleCase } from '../lib/case';
 import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } from 'lucide-react';
 import { useSiteBranding } from '../lib/siteSettings';
 import { BrandLogo } from './Login';
@@ -11,7 +11,9 @@ import PasswordInput from '../components/PasswordInput';
 export default function Register() {
   const navigate = useNavigate();
   const { branding } = useSiteBranding();
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -49,10 +51,13 @@ export default function Register() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    const fullName = toProfileTitleCase(
+      [firstName, middleName, lastName].filter((part) => part.trim()).join(' '),
+    );
 
     // Validation
-    if (!fullName.trim()) {
-      setError('Full name is required');
+    if (!firstName.trim() || !lastName.trim()) {
+      setError('First name and last name are required');
       return;
     }
     if (!email.trim()) {
@@ -87,8 +92,8 @@ export default function Register() {
         password,
         options: {
           data: {
-            full_name: toProfileTitleCase(fullName),
-            position: toProfileTitleCase(position),
+            full_name: fullName,
+            position: toProfilePosition(position),
             role: 'STANDARD',
           },
         },
@@ -168,23 +173,50 @@ export default function Register() {
             {/* Registration Form */}
             {!success && (
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Full Name */}
+                {/* Name */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Full Name
+                    First Name *
                   </label>
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input
                       type="text"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      onBlur={(e) => setFullName(toProfileTitleCase(e.currentTarget.value))}
-                      placeholder="Juan Dela Cruz"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      onBlur={(e) => setFirstName(toProfileTitleCase(e.currentTarget.value))}
+                      placeholder="Juan"
                       className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Middle Name
+                  </label>
+                  <input
+                    type="text"
+                    value={middleName}
+                    onChange={(e) => setMiddleName(e.target.value)}
+                    onBlur={(e) => setMiddleName(toProfileTitleCase(e.currentTarget.value))}
+                    placeholder="Optional"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Last Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    onBlur={(e) => setLastName(toProfileTitleCase(e.currentTarget.value))}
+                    placeholder="Dela Cruz"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                    required
+                  />
                 </div>
 
                 {/* Email */}
@@ -215,9 +247,8 @@ export default function Register() {
                     <input
                       type="text"
                       value={position}
-                      onChange={(e) => setPosition(e.target.value)}
-                      onBlur={(e) => setPosition(toProfileTitleCase(e.currentTarget.value))}
-                      placeholder="e.g., Administrative Officer"
+                      onChange={(e) => setPosition(e.target.value.toLocaleUpperCase())}
+                      placeholder="e.g., ADMINISTRATIVE OFFICER"
                       className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                       required
                     />
