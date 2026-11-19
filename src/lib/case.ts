@@ -22,7 +22,7 @@ function upperFirst(token: string): string {
   return prefix + rest[0].toUpperCase() + rest.slice(1);
 }
 
-/** Normalize profile names and designations regardless of the entered casing. */
+/** Normalize profile names regardless of the entered casing. */
 export function toProfileTitleCase(input?: string | null): string {
   if (!input) return '';
   const normalized = input.replace(/\s+/g, ' ').trim();
@@ -37,6 +37,11 @@ export function toProfileTitleCase(input?: string | null): string {
       return upperFirst(word.toLocaleLowerCase());
     })
     .join(' ');
+}
+
+/** Normalize profile designations to uppercase regardless of entered casing. */
+export function toProfilePosition(input?: string | null): string {
+  return input?.trim().replace(/\s+/g, ' ').toLocaleUpperCase() ?? '';
 }
 
 /**
@@ -100,6 +105,6 @@ export function normalizeProfileNameFields<
   return {
     ...profile,
     full_name: profile.full_name ? toProfileTitleCase(profile.full_name) : profile.full_name,
-    position: profile.position ? toProfileTitleCase(profile.position) : profile.position,
+    position: profile.position ? toProfilePosition(profile.position) : profile.position,
   };
 }

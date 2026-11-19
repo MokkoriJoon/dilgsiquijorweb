@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { emailRateLimitMessage } from '../lib/authErrors';
 import type { Profile, UserRole } from '../lib/types';
 import { USER_ROLES, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
-import { toProfileTitleCase } from '../lib/case';
+import { toProfilePosition, toProfileTitleCase } from '../lib/case';
 import {
   Users,
   Plus,
@@ -162,7 +162,7 @@ export default function UserManagement() {
       const list = ((data ?? []) as Profile[]).map((user) => ({
         ...user,
         full_name: toProfileTitleCase(user.full_name ?? '') || null,
-        position: toProfileTitleCase(user.position ?? '') || null,
+        position: toProfilePosition(user.position ?? '') || null,
       }));
       setUsers(list);
 
@@ -261,7 +261,7 @@ export default function UserManagement() {
 
     // Names / positions are stored with an Uppercase First Letter.
     const cleanName = toProfileTitleCase(form.full_name);
-    const cleanPosition = toProfileTitleCase(form.position);
+    const cleanPosition = toProfilePosition(form.position);
 
     if (!cleanName) return setFormError('Full name is required.');
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
@@ -485,7 +485,7 @@ export default function UserManagement() {
                       </div>
                     </td>
                     <td className="px-5 py-4 text-gray-600">
-                      {user.position ? toProfileTitleCase(user.position) : '—'}
+                      {user.position ? toProfilePosition(user.position) : '—'}
                     </td>
                     <td className="px-5 py-4">
                       <span
@@ -635,11 +635,10 @@ export default function UserManagement() {
                 </label>
                 <input
                   value={form.position}
-                  onChange={(e) => setForm({ ...form, position: e.target.value })}
-                  onBlur={(e) =>
-                    setForm({ ...form, position: toProfileTitleCase(e.currentTarget.value) })
+                  onChange={(e) =>
+                    setForm({ ...form, position: e.target.value.toLocaleUpperCase() })
                   }
-                  placeholder="e.g., Administrative Officer"
+                  placeholder="e.g., ADMINISTRATIVE OFFICER"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
               </div>

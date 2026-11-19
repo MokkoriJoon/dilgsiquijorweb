@@ -4,7 +4,7 @@ import { uploadAvatar, deleteAvatars } from '../lib/avatar';
 import Avatar from './Avatar';
 import type { Profile } from '../lib/types';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
-import { toProfileTitleCase } from '../lib/case';
+import { toProfilePosition, toProfileTitleCase } from '../lib/case';
 import { X, User, Mail, Briefcase, ShieldCheck, CalendarDays, Hash, Camera, Loader2, Trash2 } from 'lucide-react';
 
 function formatDateTime(iso?: string | null): string {
@@ -91,7 +91,7 @@ export default function ProfileModal({
 
       const patch = {
         full_name: toProfileTitleCase(fullName),
-        position: toProfileTitleCase(position) || null,
+        position: toProfilePosition(position) || null,
         avatar_url: nextAvatar,
       };
 
@@ -128,7 +128,7 @@ export default function ProfileModal({
 
   const rows = [
     { icon: User, label: 'Full Name', value: toProfileTitleCase(profile.full_name) || '—' },
-    { icon: Briefcase, label: 'Position / Designation', value: toProfileTitleCase(profile.position) || '—' },
+    { icon: Briefcase, label: 'Position / Designation', value: toProfilePosition(profile.position) || '—' },
     { icon: Mail, label: 'Email', value: profile.email ?? '—' },
     { icon: CalendarDays, label: 'Date Created', value: formatDateTime(profile.created_at) },
   ];
@@ -248,8 +248,7 @@ export default function ProfileModal({
               </label>
               <input
                 value={position}
-                onChange={(e) => setPosition(e.target.value)}
-                onBlur={(e) => setPosition(toProfileTitleCase(e.currentTarget.value))}
+                onChange={(e) => setPosition(e.target.value.toLocaleUpperCase())}
                 placeholder="e.g., Administrative Officer"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
               />
