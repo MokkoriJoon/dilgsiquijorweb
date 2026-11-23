@@ -65,10 +65,12 @@ function generateRandomPassword(length = 16) {
 export default function UserManagement() {
   const { profile, isSuperAdmin } = useAuth();
   const [users, setUsers] = useState<Profile[]>([]);
+  const [managerByUser, setManagerByUser] = useState<Record<string, string>>({});
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState('');
   const [query, setQuery] = useState('');
+  const [reportingSaveId, setReportingSaveId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<UserFormState | null>(null);
@@ -154,20 +156,33 @@ export default function UserManagement() {
   const loadUsers = async () => {
     setLoading(true);
     setPageError('');
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('role', { ascending: false })
-      .order('full_name');
-    if (error) {
-      setPageError(error.message);
+    const [profilesResult, placementsResult] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('*')
+        .order('role', { ascending: false })
+        .order('full_name'),
+      supabase.from('org_chart_positions').select('profile_id,manager_id'),
+    ]);
+    if (profilesResult.error) {
+      setPageError(profilesResult.error.message);
     } else {
-      const list = ((data ?? []) as Profile[]).map((user) => ({
+      const list = ((profilesResult.data ?? []) as Profile[]).map((user) => ({
         ...user,
         full_name: toProfileTitleCase(user.full_name ?? '') || null,
         position: toProfilePosition(user.position ?? '') || null,
       }));
       setUsers(list);
+      if (placementsResult.error) {
+        setPageError(`Could not load personnel reporting relationships: ${placementsResult.error.message}`);
+      } else {
+        const managerMap: Record<string, string> = {};
+        for (const user of list) managerMap[user.id] = '';
+        for (const placement of placementsResult.data ?? []) {
+          managerMap[placement.profile_id] = placement.manager_id ?? '';
+        }
+        setManagerByUser(managerMap);
+      }
 
       // Open-task counts per user (nice-to-have; silently ignored on failure)
       const { data: taskRows } = await supabase
@@ -257,6 +272,41 @@ export default function UserManagement() {
       setPageError(error instanceof Error ? error.message : 'Could not update account approval.');
     } finally {
       setApprovalBusyId(null);
+    }
+  }
+
+  async function saveReportingLine(user: Profile, selectedManagerId: string) {
+    const managerId = selectedManagerId || null;
+    if ((managerByUser[user.id] || null) === managerId || reportingSaveId) return;
+
+    let ancestor = managerId;
+    const visited = new Set<string>();
+    while (ancestor && !visited.has(ancestor)) {
+      if (ancestor === user.id) {
+        setPageError('This reporting assignment would create a loop. Choose a different head or supervisor.');
+        return;
+      }
+      visited.add(ancestor);
+      ancestor = managerByUser[ancestor] || null;
+    }
+
+    setPageError('');
+    setReportingSaveId(user.id);
+    try {
+      const { error } = await supabase.from('org_chart_positions').upsert({
+        profile_id: user.id,
+        manager_id: managerId,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) {
+        setPageError(`Could not save ${toProfileTitleCase(user.full_name ?? '') || 'staff member'}'s reporting relationship: ${error.message}`);
+        return;
+      }
+      setManagerByUser((current) => ({ ...current, [user.id]: managerId ?? '' }));
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Could not save the reporting relationship.');
+    } finally {
+      setReportingSaveId(null);
     }
   }
 
@@ -401,7 +451,7 @@ export default function UserManagement() {
             <Users size={24} className="text-blue-600" /> User Management
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Add staff, edit their details and roles, or remove accounts.
+            Manage staff, set each person's head or supervisor, and update account details.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 self-start">
@@ -409,7 +459,7 @@ export default function UserManagement() {
             to="/app/organization-chart"
             className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50"
           >
-            <Network size={16} /> Manage Organizational Chart
+            <Network size={16} /> View Organizational Chart
           </Link>
           <button
             onClick={openCreate}
@@ -474,6 +524,7 @@ export default function UserManagement() {
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-500 border-b border-gray-100 bg-gray-50/60">
                   <th className="px-5 py-3 font-semibold">User</th>
                   <th className="px-5 py-3 font-semibold">Position</th>
+                  <th className="px-5 py-3 font-semibold whitespace-nowrap">Reports To / Head</th>
                   <th className="px-5 py-3 font-semibold">Contact</th>
                   <th className="px-5 py-3 font-semibold">Role</th>
                   <th className="px-5 py-3 font-semibold">Account</th>
@@ -510,6 +561,26 @@ export default function UserManagement() {
                     </td>
                     <td className="px-5 py-4 text-gray-600">
                       {user.position ? toProfilePosition(user.position) : '—'}
+                    </td>
+                    <td className="px-5 py-4">
+                      <select
+                        value={managerByUser[user.id] ?? ''}
+                        onChange={(event) => void saveReportingLine(user, event.target.value)}
+                        disabled={reportingSaveId !== null}
+                        aria-label={`Set head or supervisor for ${toProfileTitleCase(user.full_name ?? '') || 'staff member'}`}
+                        className="min-w-[220px] rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60"
+                      >
+                        <option value="">Head / No supervisor</option>
+                        {users
+                          .filter((candidate) => candidate.id !== user.id)
+                          .map((candidate) => (
+                            <option key={candidate.id} value={candidate.id} disabled={!candidate.is_approved}>
+                              {toProfileTitleCase(candidate.full_name ?? '') || candidate.email}
+                              {candidate.position ? ` · ${toProfilePosition(candidate.position)}` : ''}
+                              {!candidate.is_approved ? ' · Pending approval' : ''}
+                            </option>
+                          ))}
+                      </select>
                     </td>
                     <td className="px-5 py-4 text-gray-600">{user.contact_phone || '—'}</td>
                     <td className="px-5 py-4">
