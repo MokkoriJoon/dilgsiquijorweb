@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -39,12 +40,79 @@ interface PositionedPlacement extends OrgPlacement {
   y: number;
 }
 
+type ConnectorSide = 'top' | 'right' | 'bottom' | 'left';
+
+interface ChartPoint {
+  x: number;
+  y: number;
+}
+
+interface OrgConnector {
+  id: string;
+  source_profile_id: string | null;
+  source_side: ConnectorSide;
+  source_x: number;
+  source_y: number;
+  target_profile_id: string | null;
+  target_side: ConnectorSide;
+  target_x: number;
+  target_y: number;
+  waypoints: ChartPoint[];
+}
+
+interface ConnectorDraft {
+  source_profile_id: string;
+  source_side: ConnectorSide;
+  source: ChartPoint;
+  cursor: ChartPoint;
+}
+
+interface ConnectorHandleDrag {
+  connector: OrgConnector;
+  pointIndex: number;
+}
+
 const ROOT_DROP_ID = 'organization-chart-root';
 const POOL_DROP_ID = 'organization-chart-unplaced';
 const CARD_WIDTH = 230;
 const CARD_HEIGHT = 72;
-const GRID_COLUMN_GAP = 280;
-const GRID_ROW_GAP = 150;
+const GRID_SIZE = 32;
+const GRID_COLUMN_GAP = GRID_SIZE * 9;
+const GRID_ROW_GAP = GRID_SIZE * 5;
+
+function snapToGrid(value: number) {
+  return Math.max(GRID_SIZE, Math.round(value / GRID_SIZE) * GRID_SIZE);
+}
+
+function sidePoint(placement: PositionedPlacement, side: ConnectorSide): ChartPoint {
+  switch (side) {
+    case 'top':
+      return { x: placement.x + CARD_WIDTH / 2, y: placement.y };
+    case 'right':
+      return { x: placement.x + CARD_WIDTH, y: placement.y + CARD_HEIGHT / 2 };
+    case 'bottom':
+      return { x: placement.x + CARD_WIDTH / 2, y: placement.y + CARD_HEIGHT };
+    case 'left':
+      return { x: placement.x, y: placement.y + CARD_HEIGHT / 2 };
+  }
+}
+
+function connectorPoints(
+  connector: OrgConnector,
+  positionedById: Map<string, PositionedPlacement>,
+): ChartPoint[] {
+  const sourcePlacement = connector.source_profile_id
+    ? positionedById.get(connector.source_profile_id)
+    : undefined;
+  const targetPlacement = connector.target_profile_id
+    ? positionedById.get(connector.target_profile_id)
+    : undefined;
+  return [
+    sourcePlacement ? sidePoint(sourcePlacement, connector.source_side) : { x: connector.source_x, y: connector.source_y },
+    ...connector.waypoints,
+    targetPlacement ? sidePoint(targetPlacement, connector.target_side) : { x: connector.target_x, y: connector.target_y },
+  ];
+}
 
 const chartCollisionDetection: CollisionDetection = (args) => {
   const collisions = pointerWithin(args);
@@ -165,29 +233,37 @@ function PersonnelDetailsModal({
 export default function OrganizationChart({ canManage = false }: { canManage?: boolean }) {
   const [people, setPeople] = useState<OrgPerson[]>([]);
   const [placements, setPlacements] = useState<OrgPlacement[]>([]);
+  const [connectors, setConnectors] = useState<OrgConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<OrgPerson | null>(null);
   const [viewportWidth, setViewportWidth] = useState(900);
+  const [connectorDraft, setConnectorDraft] = useState<ConnectorDraft | null>(null);
+  const [connectorHandleDrag, setConnectorHandleDrag] = useState<ConnectorHandleDrag | null>(null);
   const chartViewportRef = useRef<HTMLDivElement>(null);
+  const chartCanvasRef = useRef<HTMLDivElement | null>(null);
   const markerId = `org-chart-arrow-${useId().replace(/:/g, '')}`;
 
   const fetchData = useCallback(async () => {
-    const [peopleResult, placementResult] = await Promise.all([
+    const [peopleResult, placementResult, connectorResult] = await Promise.all([
       supabase
         .from('profiles')
         .select('id,full_name,email,position,contact_phone,avatar_url,role')
         .eq('is_approved', true)
         .order('full_name'),
       supabase.from('org_chart_positions').select('profile_id,manager_id,position_x,position_y'),
+      supabase.from('org_chart_connectors').select('*'),
     ]);
 
-    if (peopleResult.error || placementResult.error) {
-      const message = peopleResult.error?.message ?? placementResult.error?.message ?? 'Could not load the organization chart.';
+    if (peopleResult.error || placementResult.error || connectorResult.error) {
+      const message = peopleResult.error?.message
+        ?? placementResult.error?.message
+        ?? connectorResult.error?.message
+        ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|position_x|position_y|org_chart_positions|schema cache|does not exist/i.test(message)
+        /contact_phone|position_x|position_y|org_chart_positions|org_chart_connectors|schema cache|does not exist/i.test(message)
           ? 'The organization chart database migration is not installed. Run supabase/organizational_chart_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
@@ -195,6 +271,7 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
       setError('');
       setPeople((peopleResult.data ?? []) as OrgPerson[]);
       setPlacements((placementResult.data ?? []) as OrgPlacement[]);
+      setConnectors((connectorResult.data ?? []) as OrgConnector[]);
     }
     setLoading(false);
   }, []);
@@ -214,7 +291,7 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
 
   useRealtimeTableChanges(
     'organization-chart',
-    ['profiles', 'org_chart_positions'],
+    ['profiles', 'org_chart_positions', 'org_chart_connectors'],
     fetchData,
     60_000,
   );
@@ -237,8 +314,12 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
       return {
         ...placement,
         person,
-        x: placement.position_x ?? 32 + (index % 4) * GRID_COLUMN_GAP,
-        y: placement.position_y ?? 32 + Math.floor(index / 4) * GRID_ROW_GAP,
+        x: placement.position_x == null
+          ? GRID_SIZE + (index % 4) * GRID_COLUMN_GAP
+          : snapToGrid(placement.position_x),
+        y: placement.position_y == null
+          ? GRID_SIZE + Math.floor(index / 4) * GRID_ROW_GAP
+          : snapToGrid(placement.position_y),
       };
     });
   }, [peopleById, placements]);
@@ -246,14 +327,17 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
     () => new Map(positionedPlacements.map((placement) => [placement.profile_id, placement])),
     [positionedPlacements],
   );
+  const allConnectorPoints = connectors.flatMap((connector) => connectorPoints(connector, positionedById));
   const canvasWidth = Math.max(
     800,
     viewportWidth,
     ...positionedPlacements.map((placement) => placement.x + CARD_WIDTH + 48),
+    ...allConnectorPoints.map((point) => point.x + 48),
   );
   const canvasHeight = Math.max(
     480,
     ...positionedPlacements.map((placement) => placement.y + CARD_HEIGHT + 48),
+    ...allConnectorPoints.map((point) => point.y + 48),
   );
   const unplacedPeople = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -290,10 +374,234 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
     if (!initial || !viewport) return nextAvailablePosition();
     const viewportRect = viewport.getBoundingClientRect();
     return {
-      x: Math.max(16, initial.left + event.delta.x - viewportRect.left + viewport.scrollLeft),
-      y: Math.max(16, initial.top + event.delta.y - viewportRect.top + viewport.scrollTop),
+      x: snapToGrid(initial.left + event.delta.x - viewportRect.left + viewport.scrollLeft),
+      y: snapToGrid(initial.top + event.delta.y - viewportRect.top + viewport.scrollTop),
     };
   }, [nextAvailablePosition]);
+
+  const toCanvasPoint = useCallback((clientX: number, clientY: number): ChartPoint => {
+    const canvas = chartCanvasRef.current;
+    if (!canvas) return { x: GRID_SIZE, y: GRID_SIZE };
+    const bounds = canvas.getBoundingClientRect();
+    return {
+      x: clientX - bounds.left,
+      y: clientY - bounds.top,
+    };
+  }, []);
+
+  const findAttachTarget = useCallback((point: ChartPoint) => {
+    for (const placement of positionedPlacements) {
+      if (
+        point.x < placement.x - 24 ||
+        point.x > placement.x + CARD_WIDTH + 24 ||
+        point.y < placement.y - 24 ||
+        point.y > placement.y + CARD_HEIGHT + 24
+      ) continue;
+      const distances: Array<{ side: ConnectorSide; distance: number }> = [
+        { side: 'top', distance: Math.abs(point.y - placement.y) },
+        { side: 'right', distance: Math.abs(point.x - placement.x - CARD_WIDTH) },
+        { side: 'bottom', distance: Math.abs(point.y - placement.y - CARD_HEIGHT) },
+        { side: 'left', distance: Math.abs(point.x - placement.x) },
+      ];
+      const nearest = distances.reduce((best, candidate) =>
+        candidate.distance < best.distance ? candidate : best,
+      );
+      return {
+        profileId: placement.profile_id,
+        side: nearest.side,
+        point: sidePoint(placement, nearest.side),
+      };
+    }
+    return null;
+  }, [positionedPlacements]);
+
+  const saveConnector = useCallback(async (connector: OrgConnector, isNew = false) => {
+    setSaving(true);
+    setError('');
+    const values = {
+      source_profile_id: connector.source_profile_id,
+      source_side: connector.source_side,
+      source_x: connector.source_x,
+      source_y: connector.source_y,
+      target_profile_id: connector.target_profile_id,
+      target_side: connector.target_side,
+      target_x: connector.target_x,
+      target_y: connector.target_y,
+      waypoints: connector.waypoints,
+      updated_at: new Date().toISOString(),
+    };
+    const result = isNew
+      ? await supabase.from('org_chart_connectors').insert(values)
+      : await supabase.from('org_chart_connectors').update(values).eq('id', connector.id);
+    if (result.error) {
+      setError(`Could not save the chart connector: ${result.error.message}`);
+    } else {
+      await fetchData();
+    }
+    setSaving(false);
+  }, [fetchData]);
+
+  const beginConnector = useCallback((
+    event: ReactPointerEvent<HTMLButtonElement>,
+    profileId: string,
+    side: ConnectorSide,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const placement = positionedById.get(profileId);
+    if (!placement) return;
+    const source = sidePoint(placement, side);
+    setConnectorDraft({
+      source_profile_id: profileId,
+      source_side: side,
+      source,
+      cursor: toCanvasPoint(event.clientX, event.clientY),
+    });
+  }, [positionedById, toCanvasPoint]);
+
+  const moveConnectorDraft = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!connectorDraft) return;
+    const point = toCanvasPoint(event.clientX, event.clientY);
+    setConnectorDraft((draft) => draft ? { ...draft, cursor: point } : null);
+  }, [connectorDraft, toCanvasPoint]);
+
+  const finishConnector = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!connectorDraft) return;
+    const cursor = toCanvasPoint(event.clientX, event.clientY);
+    const target = findAttachTarget(cursor);
+    if (Math.hypot(cursor.x - connectorDraft.source.x, cursor.y - connectorDraft.source.y) >= 24) {
+      const endPoint = target?.point ?? { x: snapToGrid(cursor.x), y: snapToGrid(cursor.y) };
+      void saveConnector({
+        id: '',
+        source_profile_id: connectorDraft.source_profile_id,
+        source_side: connectorDraft.source_side,
+        source_x: connectorDraft.source.x,
+        source_y: connectorDraft.source.y,
+        target_profile_id: target?.profileId ?? null,
+        target_side: target?.side ?? 'left',
+        target_x: endPoint.x,
+        target_y: endPoint.y,
+        waypoints: [],
+      }, true);
+    }
+    setConnectorDraft(null);
+  }, [connectorDraft, findAttachTarget, saveConnector, toCanvasPoint]);
+
+  const beginConnectorHandle = useCallback((
+    event: ReactPointerEvent<HTMLButtonElement>,
+    connector: OrgConnector,
+    pointIndex: number,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const points = connectorPoints(connector, positionedById);
+    const point = points[pointIndex];
+    const editable = { ...connector, waypoints: [...connector.waypoints] };
+    if (pointIndex === 0) {
+      editable.source_profile_id = null;
+      editable.source_x = point.x;
+      editable.source_y = point.y;
+    } else if (pointIndex === points.length - 1) {
+      editable.target_profile_id = null;
+      editable.target_x = point.x;
+      editable.target_y = point.y;
+    }
+    setConnectorHandleDrag({ connector: editable, pointIndex });
+  }, [positionedById]);
+
+  const moveConnectorHandle = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!connectorHandleDrag) return;
+    const point = toCanvasPoint(event.clientX, event.clientY);
+    const nextPoint = { x: snapToGrid(point.x), y: snapToGrid(point.y) };
+    setConnectorHandleDrag((current) => {
+      if (!current) return null;
+      const { connector, pointIndex } = current;
+      if (pointIndex === 0) {
+        return {
+          connector: { ...connector, source_profile_id: null, source_x: nextPoint.x, source_y: nextPoint.y },
+          pointIndex,
+        };
+      }
+      if (pointIndex === connector.waypoints.length + 1) {
+        return {
+          connector: { ...connector, target_profile_id: null, target_x: nextPoint.x, target_y: nextPoint.y },
+          pointIndex,
+        };
+      }
+      const waypoints = [...connector.waypoints];
+      waypoints[pointIndex - 1] = nextPoint;
+      return { connector: { ...connector, waypoints }, pointIndex };
+    });
+  }, [connectorHandleDrag, toCanvasPoint]);
+
+  const finishConnectorHandle = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!connectorHandleDrag) return;
+    const { connector, pointIndex } = connectorHandleDrag;
+    const cursor = toCanvasPoint(event.clientX, event.clientY);
+    const target = findAttachTarget(cursor);
+    let updated = connector;
+    if (pointIndex === 0 && target) {
+      updated = {
+        ...connector,
+        source_profile_id: target.profileId,
+        source_side: target.side,
+        source_x: target.point.x,
+        source_y: target.point.y,
+      };
+    } else if (pointIndex === connector.waypoints.length + 1 && target) {
+      updated = {
+        ...connector,
+        target_profile_id: target.profileId,
+        target_side: target.side,
+        target_x: target.point.x,
+        target_y: target.point.y,
+      };
+    }
+    void saveConnector(updated);
+    setConnectorHandleDrag(null);
+  }, [connectorHandleDrag, findAttachTarget, saveConnector, toCanvasPoint]);
+
+  const addConnectorBend = useCallback((connector: OrgConnector, segmentIndex: number) => {
+    const points = connectorPoints(connector, positionedById);
+    const before = points[segmentIndex];
+    const after = points[segmentIndex + 1];
+    let bends: ChartPoint[];
+    if (before.y === after.y) {
+      const offsetY = snapToGrid(before.y + GRID_SIZE * 2);
+      bends = [
+        { x: snapToGrid(before.x), y: offsetY },
+        { x: snapToGrid(after.x), y: offsetY },
+      ];
+    } else if (before.x === after.x) {
+      const offsetX = snapToGrid(before.x + GRID_SIZE * 2);
+      bends = [
+        { x: offsetX, y: snapToGrid(before.y) },
+        { x: offsetX, y: snapToGrid(after.y) },
+      ];
+    } else {
+      bends = [{ x: snapToGrid(after.x), y: snapToGrid(before.y) }];
+    }
+    const waypoints = [...connector.waypoints];
+    waypoints.splice(segmentIndex, 0, ...bends);
+    void saveConnector({ ...connector, waypoints });
+  }, [positionedById, saveConnector]);
+
+  const deleteConnector = useCallback(async (connectorId: string) => {
+    setSaving(true);
+    setError('');
+    const { error: deleteError } = await supabase
+      .from('org_chart_connectors')
+      .delete()
+      .eq('id', connectorId);
+    if (deleteError) {
+      setError(`Could not delete the chart connector: ${deleteError.message}`);
+    } else {
+      await fetchData();
+    }
+    setSaving(false);
+  }, [fetchData]);
 
   const updatePlacement = useCallback(async (
     profileId: string,
@@ -317,6 +625,15 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
     }
 
     if (managerId === undefined) {
+      const { error: connectorError } = await supabase
+        .from('org_chart_connectors')
+        .delete()
+        .or(`source_profile_id.eq.${profileId},target_profile_id.eq.${profileId}`);
+      if (connectorError) {
+        setError(`Could not remove this staff member's chart connectors: ${connectorError.message}`);
+        setSaving(false);
+        return;
+      }
       ({ error: saveError } = await supabase
         .from('org_chart_positions')
         .delete()
@@ -394,9 +711,19 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
 
   const rootDrop = useDroppable({ id: ROOT_DROP_ID, disabled: !canManage });
   const poolDrop = useDroppable({ id: POOL_DROP_ID, disabled: !canManage });
-  const connectors = positionedPlacements.filter(
-    (placement) => placement.manager_id && positionedById.has(placement.manager_id),
+  const displayConnectors = connectors.map((connector) =>
+    connector.id === connectorHandleDrag?.connector.id
+      ? connectorHandleDrag.connector
+      : connector,
   );
+  const connectorGeometry = displayConnectors.map((connector) => ({
+    connector,
+    points: connectorPoints(connector, positionedById),
+  }));
+  const setChartCanvasRef = (node: HTMLDivElement | null) => {
+    chartCanvasRef.current = node;
+    rootDrop.setNodeRef(node);
+  };
 
   return (
     <DndContext
@@ -441,7 +768,7 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                       <Users size={16} /> Staff not yet placed
                     </h3>
                     <p className="mt-1 text-xs text-gray-500">
-                      Drop anywhere in the chart grid to add a top-level staff member, or onto a supervisor to connect the reporting line.
+                      Drop staff onto the grid to place them. Drag the green handles around a person to draw connections; add green bend points on a line to route it.
                       Drag a placed member here to remove them from the chart.
                     </p>
                   </div>
@@ -496,14 +823,14 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                 className="w-full overflow-auto rounded-xl border border-gray-200 bg-slate-50"
               >
                 <div
-                  ref={canManage ? rootDrop.setNodeRef : undefined}
+                  ref={canManage ? setChartCanvasRef : undefined}
                   className={`relative ${canManage && rootDrop.isOver ? 'ring-2 ring-inset ring-blue-300' : ''}`}
                   style={{
                     width: `${canvasWidth}px`,
                     height: `${canvasHeight}px`,
                     backgroundImage:
                       'linear-gradient(to right, rgba(148, 163, 184, 0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.16) 1px, transparent 1px)',
-                    backgroundSize: '32px 32px',
+                    backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
                   }}
                 >
                   {canManage && positionedPlacements.length === 0 && (
@@ -520,52 +847,97 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                       viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
                     >
                       <defs>
-                        <marker
-                          id={markerId}
-                          markerWidth="8"
-                          markerHeight="8"
-                          refX="7"
-                          refY="4"
-                          orient="auto"
-                        >
-                          <path d="M0,0 L8,4 L0,8 Z" fill="#60a5fa" />
+                        <marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                          <path d="M0,0 L8,4 L0,8 Z" fill="#16a34a" />
                         </marker>
                       </defs>
-                      {connectors.map((child) => {
-                        const parent = positionedById.get(child.manager_id!);
-                        if (!parent) return null;
-                        const parentCenter = {
-                          x: parent.x + CARD_WIDTH / 2,
-                          y: parent.y + CARD_HEIGHT / 2,
-                        };
-                        const childCenter = {
-                          x: child.x + CARD_WIDTH / 2,
-                          y: child.y + CARD_HEIGHT / 2,
-                        };
-                        const dx = childCenter.x - parentCenter.x;
-                        const dy = childCenter.y - parentCenter.y;
-                        const edgeRatio = Math.max(
-                          Math.abs(dx) / (CARD_WIDTH / 2),
-                          Math.abs(dy) / (CARD_HEIGHT / 2),
-                        );
-                        const edgeScale = edgeRatio === 0 ? 0 : 1 / edgeRatio;
-                        const startX = parentCenter.x + dx * edgeScale;
-                        const startY = parentCenter.y + dy * edgeScale;
-                        const endX = childCenter.x - dx * edgeScale;
-                        const endY = childCenter.y - dy * edgeScale;
-                        return (
-                          <path
-                            key={child.profile_id}
-                            d={`M ${startX} ${startY} C ${startX + dx * 0.35} ${startY + dy * 0.15}, ${endX - dx * 0.35} ${endY - dy * 0.15}, ${endX} ${endY}`}
-                            fill="none"
-                            stroke="#60a5fa"
-                            strokeWidth="2"
-                            markerEnd={`url(#${markerId})`}
-                          />
-                        );
-                      })}
+                      {connectorGeometry.map(({ connector, points }) => (
+                        <path
+                          key={connector.id}
+                          d={points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')}
+                          fill="none"
+                          stroke="#16a34a"
+                          strokeWidth="2.5"
+                          markerEnd={`url(#${markerId})`}
+                        />
+                      ))}
+                      {connectorDraft && (
+                        <path
+                          d={`M ${connectorDraft.source.x} ${connectorDraft.source.y} L ${connectorDraft.cursor.x} ${connectorDraft.cursor.y}`}
+                          fill="none"
+                          stroke="#16a34a"
+                          strokeWidth="2.5"
+                          strokeDasharray="6 4"
+                          markerEnd={`url(#${markerId})`}
+                        />
+                      )}
                     </svg>
                   )}
+                  {connectorGeometry.map(({ connector, points }) => (
+                    <div key={`handles:${connector.id}`} className="pointer-events-none absolute inset-0 z-20">
+                      {points.map((point, pointIndex) => (
+                        <button
+                          key={`point:${pointIndex}`}
+                          type="button"
+                          aria-label={pointIndex === 0 || pointIndex === points.length - 1
+                            ? 'Drag connector endpoint'
+                            : 'Drag connector bend'}
+                          title={pointIndex === 0 || pointIndex === points.length - 1
+                            ? 'Drag to move or connect this endpoint'
+                            : 'Drag to move this bend'}
+                          onPointerDown={(event) => canManage && beginConnectorHandle(event, connector, pointIndex)}
+                          onPointerMove={(event) => {
+                            event.stopPropagation();
+                            moveConnectorHandle(event);
+                          }}
+                          onPointerUp={(event) => {
+                            event.stopPropagation();
+                            finishConnectorHandle(event);
+                          }}
+                          onPointerCancel={() => setConnectorHandleDrag(null)}
+                          className={`pointer-events-auto absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-green-600 shadow ${
+                            canManage ? 'cursor-grab hover:scale-125 active:cursor-grabbing' : 'hidden'
+                          }`}
+                          style={{ left: point.x, top: point.y }}
+                        />
+                      ))}
+                      {canManage && points.slice(0, -1).map((point, segmentIndex) => {
+                        const nextPoint = points[segmentIndex + 1];
+                        const midpoint = {
+                          x: (point.x + nextPoint.x) / 2,
+                          y: (point.y + nextPoint.y) / 2,
+                        };
+                        return (
+                          <button
+                            key={`bend:${segmentIndex}`}
+                            type="button"
+                            aria-label="Add a right-angle bend to connector"
+                            title="Add a right-angle bend"
+                            onClick={() => addConnectorBend(connector, segmentIndex)}
+                            className="pointer-events-auto absolute grid h-5 w-5 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-green-600 text-xs font-bold leading-none text-white shadow hover:scale-125"
+                            style={{ left: midpoint.x, top: midpoint.y }}
+                          >
+                            +
+                          </button>
+                        );
+                      })}
+                      {canManage && (
+                        <button
+                          type="button"
+                          aria-label="Delete connector"
+                          title="Delete connector"
+                          onClick={() => deleteConnector(connector.id)}
+                          className="pointer-events-auto absolute grid h-6 w-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-red-200 bg-white text-red-600 shadow hover:bg-red-50"
+                          style={{
+                            left: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+                            top: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
                   {positionedPlacements.map((placement) => (
                     <div
                       key={placement.profile_id}
@@ -578,6 +950,35 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                         draggable={canManage}
                         dropTarget={canManage}
                       />
+                      {canManage && (['top', 'right', 'bottom', 'left'] as const).map((side) => {
+                        const offsets: Record<ConnectorSide, string> = {
+                          top: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2',
+                          right: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2',
+                          bottom: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2',
+                          left: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2',
+                        };
+                        return (
+                          <button
+                            key={`port:${side}`}
+                            type="button"
+                            aria-label={`Draw connector from ${side} side`}
+                            title={`Drag to draw a connector from the ${side} side`}
+                            onPointerDown={(event) => beginConnector(event, placement.profile_id, side)}
+                            onPointerMove={(event) => {
+                              event.stopPropagation();
+                              moveConnectorDraft(event);
+                            }}
+                            onPointerUp={(event) => {
+                              event.stopPropagation();
+                              finishConnector(event);
+                            }}
+                            onPointerCancel={() => setConnectorDraft(null)}
+                            className={`absolute ${offsets[side]} z-30 grid h-5 w-5 place-items-center rounded-full border-2 border-white bg-green-600 text-xs font-bold leading-none text-white shadow hover:scale-125 active:cursor-grabbing`}
+                          >
+                            +
+                          </button>
+                        );
+                      })}
                       {canManage && (
                         <button
                           type="button"
