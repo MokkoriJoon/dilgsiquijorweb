@@ -131,8 +131,13 @@ are displayed in that person's chart details.
 
 Run `supabase/org_chart_layout_preferences_migration.sql` on existing projects
 before deploying chart badge and layout controls. Super Admins can add a badge
-to a person and choose whether that person's direct reports are arranged
-horizontally or vertically.
+to a person and configure their reports' layout.
+
+Run `supabase/org_chart_mixed_report_groups_migration.sql` after the layout
+preferences migration and before deploying mixed report groups. Super Admins
+can group a person's direct reports, choose horizontal or vertical arrangement
+per group, and set a default for future reports. Each supervisor can have a
+different combination of layouts.
 
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
