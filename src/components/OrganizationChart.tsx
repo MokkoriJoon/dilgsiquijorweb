@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
+  pointerWithin,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
+import type { CollisionDetection, DragEndEvent } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { Mail, Network, Phone, Users, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -32,6 +33,12 @@ interface OrgPlacement {
 
 const ROOT_DROP_ID = 'organization-chart-root';
 const POOL_DROP_ID = 'organization-chart-unplaced';
+
+const chartCollisionDetection: CollisionDetection = (args) => {
+  const collisions = pointerWithin(args);
+  const managerTarget = collisions.find(({ id }) => String(id).startsWith('manager:'));
+  return managerTarget ? [managerTarget] : collisions;
+};
 
 function OrganizationPersonCard({
   person,
@@ -327,7 +334,11 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
   const rootIds = childrenByManager.get(null) ?? [];
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={chartCollisionDetection}
+      onDragEnd={onDragEnd}
+    >
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -365,7 +376,7 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                       <Users size={16} /> Staff not yet placed
                     </h3>
                     <p className="mt-1 text-xs text-gray-500">
-                      Drag a staff member to the root area or onto a supervisor to connect the reporting line.
+                      Drop anywhere in the chart grid to add a top-level staff member, or onto a supervisor to connect the reporting line.
                       Drag a placed member here to remove them from the chart.
                     </p>
                   </div>
@@ -399,30 +410,31 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
               </aside>
             )}
 
-            {canManage && (
-              <div
-                ref={rootDrop.setNodeRef}
-                className={`mb-4 rounded-xl border-2 border-dashed px-4 py-3 text-center text-sm font-medium ${
-                  rootDrop.isOver ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-500'
-                }`}
-              >
-                Drop here to add a top-level staff member or make them a root
-              </div>
-            )}
-
             {rootIds.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-500">
-                {people.length === 0
-                  ? 'No approved personnel are available to display.'
-                  : canManage
-                    ? 'Drag staff members into the chart to begin building the organization hierarchy.'
-                    : 'The organizational chart has not been set up yet.'}
+                <div
+                  ref={canManage ? rootDrop.setNodeRef : undefined}
+                  className={`grid min-h-[260px] w-full place-items-center rounded-xl border border-dashed p-6 text-center text-sm text-gray-500 ${
+                    canManage
+                      ? rootDrop.isOver
+                        ? 'border-blue-500 bg-blue-50 text-blue-800 ring-2 ring-blue-200'
+                        : 'border-gray-300 bg-slate-50'
+                      : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  {people.length === 0
+                    ? 'No approved personnel are available to display.'
+                    : canManage
+                      ? 'Drop staff anywhere in this grid to add them to the chart.'
+                      : 'The organizational chart has not been set up yet.'}
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-xl bg-slate-50 p-6">
-                <div className="flex min-w-max justify-center gap-8">
+                <div
+                  ref={canManage ? rootDrop.setNodeRef : undefined}
+                  className={`grid min-h-[260px] w-full grid-cols-1 content-start items-start justify-items-center gap-x-8 gap-y-10 overflow-x-auto rounded-xl p-6 sm:grid-cols-2 lg:grid-cols-3 ${
+                    canManage && rootDrop.isOver ? 'bg-blue-50 ring-2 ring-blue-200' : 'bg-slate-50'
+                  }`}
+                >
                   {rootIds.map((profileId) => renderBranch(profileId))}
-                </div>
               </div>
             )}
           </>
