@@ -258,8 +258,12 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
   }, [fetchData, placementById]);
 
   const onDragEnd = useCallback(async ({ active, over }: DragEndEvent) => {
-    if (!canManage || !over) return;
+    if (!canManage) return;
     const profileId = String(active.id);
+    if (!over) {
+      if (!placementById.has(profileId)) await updatePlacement(profileId, null);
+      return;
+    }
     const overId = String(over.id);
     if (overId === POOL_DROP_ID) {
       if (placementById.has(profileId)) await updatePlacement(profileId, undefined);
@@ -393,13 +397,22 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                   className={`flex min-h-20 flex-wrap gap-3 rounded-lg p-2 ${poolDrop.isOver ? 'bg-blue-100 ring-2 ring-blue-300' : ''}`}
                 >
                   {unplacedPeople.map((person) => (
-                    <OrganizationPersonCard
-                      key={person.id}
-                      person={person}
-                      onSelect={setSelectedPerson}
-                      draggable
-                      dropTarget={false}
-                    />
+                    <div key={person.id} className="flex flex-col items-start gap-1.5">
+                      <OrganizationPersonCard
+                        person={person}
+                        onSelect={setSelectedPerson}
+                        draggable
+                        dropTarget={false}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => updatePlacement(person.id, null)}
+                        disabled={saving}
+                        className="rounded-md px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                      >
+                        Add as top-level
+                      </button>
+                    </div>
                   ))}
                   {unplacedPeople.length === 0 && (
                     <p className="self-center px-2 py-3 text-sm text-gray-500">
