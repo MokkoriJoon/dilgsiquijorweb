@@ -519,8 +519,8 @@ export default function UserManagement() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
+            <table className="w-full min-w-[1200px] text-sm">
+              <thead className="whitespace-nowrap">
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-500 border-b border-gray-100 bg-gray-50/60">
                   <th className="px-5 py-3 font-semibold">User</th>
                   <th className="px-5 py-3 font-semibold">Position</th>
@@ -559,7 +559,7 @@ export default function UserManagement() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-4 text-gray-600">
+                    <td className="whitespace-nowrap px-5 py-4 text-gray-600">
                       {user.position ? toProfilePosition(user.position) : '—'}
                     </td>
                     <td className="px-5 py-4">
@@ -568,7 +568,7 @@ export default function UserManagement() {
                         onChange={(event) => void saveReportingLine(user, event.target.value)}
                         disabled={reportingSaveId !== null}
                         aria-label={`Set head or supervisor for ${toProfileTitleCase(user.full_name ?? '') || 'staff member'}`}
-                        className="min-w-[220px] rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60"
+                        className="w-[190px] max-w-[190px] truncate whitespace-nowrap rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60"
                       >
                         <option value="">Head / No supervisor</option>
                         {users
@@ -582,7 +582,7 @@ export default function UserManagement() {
                           ))}
                       </select>
                     </td>
-                    <td className="px-5 py-4 text-gray-600">{user.contact_phone || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-gray-600">{user.contact_phone || '—'}</td>
                     <td className="px-5 py-4">
                       <span
                         className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[user.role]}`}
@@ -602,10 +602,10 @@ export default function UserManagement() {
                         {user.is_approved ? 'Approved' : 'Pending'}
                       </span>
                     </td>
-                    <td className="px-5 py-4 text-gray-600">
+                    <td className="whitespace-nowrap px-5 py-4 text-gray-600">
                       {taskCounts[user.id] ?? 0}
                     </td>
-                    <td className="px-5 py-4">
+                    <td className="whitespace-nowrap px-5 py-4">
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => toggleApproval(user)}
