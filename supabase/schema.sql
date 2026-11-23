@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS public.org_chart_positions (
   position_y DOUBLE PRECISION,
   chart_label TEXT,
   children_layout TEXT NOT NULL DEFAULT 'horizontal',
+  report_groups JSONB NOT NULL DEFAULT '[]'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT org_chart_positions_no_self_manager CHECK (profile_id <> manager_id),
@@ -281,7 +282,8 @@ ALTER TABLE public.org_chart_positions
   ADD COLUMN IF NOT EXISTS position_x DOUBLE PRECISION,
   ADD COLUMN IF NOT EXISTS position_y DOUBLE PRECISION,
   ADD COLUMN IF NOT EXISTS chart_label TEXT,
-  ADD COLUMN IF NOT EXISTS children_layout TEXT NOT NULL DEFAULT 'horizontal';
+  ADD COLUMN IF NOT EXISTS children_layout TEXT NOT NULL DEFAULT 'horizontal',
+  ADD COLUMN IF NOT EXISTS report_groups JSONB NOT NULL DEFAULT '[]'::JSONB;
 DO $$
 BEGIN
   IF NOT EXISTS (

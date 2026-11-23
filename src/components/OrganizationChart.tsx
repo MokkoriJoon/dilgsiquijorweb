@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Mail, Network, Pencil, Phone, Save, Users, X } from 'lucide-react';
+import { Mail, Network, Pencil, Phone, Plus, Save, Trash2, Users, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRealtimeTableChanges } from '../lib/realtime';
 import { toProfilePosition, toProfileTitleCase } from '../lib/case';
@@ -7,6 +7,13 @@ import { useAuth } from '../lib/useAuth';
 import Avatar from './Avatar';
 
 type ChildrenLayout = 'horizontal' | 'vertical';
+
+interface ReportGroup {
+  id: string;
+  label: string;
+  layout: ChildrenLayout;
+  member_ids: string[];
+}
 
 interface OrgPerson {
   id: string;
@@ -24,12 +31,14 @@ interface OrgPlacement {
   manager_id: string | null;
   chart_label: string | null;
   children_layout: ChildrenLayout;
+  report_groups: ReportGroup[] | null;
 }
 
 interface PositionedPerson extends OrgPerson {
   manager_id: string | null;
   chart_label: string | null;
   children_layout: ChildrenLayout;
+  report_groups: ReportGroup[];
   x: number;
   y: number;
   depth: number;
@@ -40,15 +49,27 @@ interface LayoutNode {
   manager_id: string | null;
   chart_label: string | null;
   children_layout: ChildrenLayout;
+  report_groups: ReportGroup[];
   width: number;
   height: number;
-  children: Array<{ node: LayoutNode; x: number; y: number }>;
+  groups: Array<{
+    id: string;
+    layout: ChildrenLayout;
+    x: number;
+    width: number;
+    height: number;
+    children: Array<{ node: LayoutNode; x: number; y: number }>;
+  }>;
 }
 
 interface ChartConnector {
   manager: PositionedPerson;
-  reports: PositionedPerson[];
-  layout: ChildrenLayout;
+  groups: Array<{
+    layout: ChildrenLayout;
+    x: number;
+    width: number;
+    reports: PositionedPerson[];
+  }>;
 }
 
 const CARD_WIDTH = 230;
@@ -57,20 +78,75 @@ const HORIZONTAL_GAP = 64;
 const VERTICAL_GAP = 104;
 const CHART_MARGIN = 32;
 
+function makeReportGroup(label: string, layout: ChildrenLayout, memberIds: string[] = []): ReportGroup {
+  return {
+    id: `group-${crypto.randomUUID()}`,
+    label,
+    layout,
+    member_ids: memberIds,
+  };
+}
+
+function normalizeReportGroups(
+  input: ReportGroup[] | null | undefined,
+  childIds: string[],
+  defaultLayout: ChildrenLayout,
+): ReportGroup[] {
+  const validChildIds = new Set(childIds);
+  const assignedChildIds = new Set<string>();
+  const groups = (Array.isArray(input) ? input : [])
+    .filter((group) => group && typeof group.id === 'string')
+    .map((group, index): ReportGroup => {
+      const members = (Array.isArray(group.member_ids) ? group.member_ids : [])
+        .filter((id) => validChildIds.has(id) && !assignedChildIds.has(id));
+      members.forEach((id) => assignedChildIds.add(id));
+      return {
+        id: group.id,
+        label: typeof group.label === 'string' && group.label.trim()
+          ? group.label.trim()
+          : `Group ${index + 1}`,
+        layout: group.layout === 'vertical' ? 'vertical' : 'horizontal',
+        member_ids: members,
+      };
+    });
+
+  const unassigned = childIds.filter((id) => !assignedChildIds.has(id));
+  if (groups.length === 0 && childIds.length > 0) {
+    groups.push(makeReportGroup('Group 1', defaultLayout, childIds));
+  } else if (unassigned.length > 0) {
+    groups.push({
+      id: `new-reports-${unassigned[0]}`,
+      label: 'New reports',
+      layout: defaultLayout,
+      member_ids: unassigned,
+    });
+  }
+  return groups;
+}
+
 function PersonnelDetailsModal({
   person,
+  reports,
   onClose,
   isSuperAdmin,
   onSave,
 }: {
   person: PositionedPerson;
+  reports: PositionedPerson[];
   onClose: () => void;
   isSuperAdmin: boolean;
-  onSave: (chartLabel: string, childrenLayout: ChildrenLayout) => Promise<void>;
+  onSave: (
+    chartLabel: string,
+    defaultLayout: ChildrenLayout,
+    reportGroups: ReportGroup[],
+  ) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [chartLabel, setChartLabel] = useState(person.chart_label ?? '');
-  const [childrenLayout, setChildrenLayout] = useState<ChildrenLayout>(person.children_layout);
+  const [defaultLayout, setDefaultLayout] = useState<ChildrenLayout>(person.children_layout);
+  const [reportGroups, setReportGroups] = useState<ReportGroup[]>(() =>
+    normalizeReportGroups(person.report_groups, reports.map((report) => report.id), person.children_layout),
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -86,7 +162,7 @@ function PersonnelDetailsModal({
     setSaving(true);
     setSaveError('');
     try {
-      await onSave(chartLabel.trim(), childrenLayout);
+      await onSave(chartLabel.trim(), defaultLayout, reportGroups);
       setIsEditing(false);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not save chart settings.');
@@ -95,10 +171,69 @@ function PersonnelDetailsModal({
     }
   };
 
+  const startEditing = () => {
+    setChartLabel(person.chart_label ?? '');
+    setDefaultLayout(person.children_layout);
+    setReportGroups(normalizeReportGroups(
+      person.report_groups,
+      reports.map((report) => report.id),
+      person.children_layout,
+    ));
+    setSaveError('');
+    setIsEditing((editing) => !editing);
+  };
+
+  const addReportGroup = () => {
+    setReportGroups((groups) => [
+      ...groups,
+      makeReportGroup(`Group ${groups.length + 1}`, defaultLayout),
+    ]);
+  };
+
+  const updateReportGroup = (groupId: string, patch: Partial<ReportGroup>) => {
+    setReportGroups((groups) => groups.map((group) =>
+      group.id === groupId ? { ...group, ...patch } : group,
+    ));
+  };
+
+  const removeReportGroup = (groupId: string) => {
+    setReportGroups((groups) => {
+      const remaining = groups.filter((group) => group.id !== groupId);
+      if (remaining.length === 0) return [];
+      const removed = groups.find((group) => group.id === groupId);
+      return remaining.map((group, index) => index === 0 && removed
+        ? { ...group, member_ids: [...group.member_ids, ...removed.member_ids] }
+        : group);
+    });
+  };
+
+  const assignReportToGroup = (reportId: string, groupId: string) => {
+    setReportGroups((groups) => groups.map((group) => ({
+      ...group,
+      member_ids: group.id === groupId
+        ? [...group.member_ids.filter((id) => id !== reportId), reportId]
+        : group.member_ids.filter((id) => id !== reportId),
+    })));
+  };
+
+  const reportsById = new Map(reports.map((report) => [report.id, report]));
+  const groupByReportId = new Map<string, string>();
+  const reportsByGroup = new Map<string, PositionedPerson[]>();
+  for (const group of reportGroups) {
+    const groupReports: PositionedPerson[] = [];
+    for (const reportId of group.member_ids) {
+      const report = reportsById.get(reportId);
+      if (!report) continue;
+      groupReports.push(report);
+      groupByReportId.set(reportId, group.id);
+    }
+    reportsByGroup.set(group.id, groupReports);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Personnel details">
       <button type="button" className="absolute inset-0 bg-black/50" onClick={onClose} aria-label="Close personnel details" />
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
+      <div className="relative max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-xl">
         <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
           <div className="flex items-center gap-3">
             <Avatar name={person.full_name} src={person.avatar_url} size={56} />
@@ -115,12 +250,7 @@ function PersonnelDetailsModal({
             {isSuperAdmin && (
               <button
                 type="button"
-                onClick={() => {
-                  setChartLabel(person.chart_label ?? '');
-                  setChildrenLayout(person.children_layout);
-                  setSaveError('');
-                  setIsEditing((editing) => !editing);
-                }}
+                onClick={startEditing}
                 className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50"
               >
                 <Pencil size={15} /> {isEditing ? 'Cancel' : 'Edit'}
@@ -152,34 +282,105 @@ function PersonnelDetailsModal({
                   : 'Leave blank to hide this person’s badge.'}
               </p>
             </div>
-            <fieldset>
-              <legend className="mb-2 text-sm font-medium text-gray-700">Arrange direct reports</legend>
-              <div className="grid grid-cols-2 gap-2">
-                {(['horizontal', 'vertical'] as const).map((direction) => (
-                  <label
-                    key={direction}
-                    className={`cursor-pointer rounded-lg border p-3 text-sm ${
-                      childrenLayout === direction
-                        ? 'border-blue-500 bg-blue-50 text-blue-800'
-                        : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="org-chart-children-layout"
-                      value={direction}
-                      checked={childrenLayout === direction}
-                      onChange={() => setChildrenLayout(direction)}
-                      className="sr-only"
-                    />
-                    <span className="block font-semibold capitalize">{direction}</span>
-                    <span className="mt-0.5 block text-xs text-gray-500">
-                      {direction === 'horizontal' ? 'Side by side' : 'Stacked vertically'}
-                    </span>
-                  </label>
-                ))}
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="org-chart-default-layout" className="mb-1 block text-sm font-medium text-gray-700">
+                  Default for new direct reports
+                </label>
+                <select
+                  id="org-chart-default-layout"
+                  value={defaultLayout}
+                  onChange={(event) => setDefaultLayout(event.target.value as ChildrenLayout)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="horizontal">Horizontal</option>
+                  <option value="vertical">Vertical</option>
+                </select>
               </div>
-            </fieldset>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Report groups</h3>
+                  <p className="text-xs text-gray-500">
+                    Groups sit side by side; people in each group follow its layout.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={addReportGroup}
+                  className="flex items-center gap-1 rounded-lg border border-blue-200 px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                >
+                  <Plus size={14} /> Add group
+                </button>
+              </div>
+              {reportGroups.map((group) => (
+                <div key={group.id} className="space-y-2 rounded-lg border border-gray-200 p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      aria-label="Group name"
+                      value={group.label}
+                      maxLength={32}
+                      onChange={(event) => updateReportGroup(group.id, { label: event.target.value })}
+                      className="min-w-0 flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                    />
+                    <select
+                      aria-label={`Layout for ${group.label}`}
+                      value={group.layout}
+                      onChange={(event) =>
+                        updateReportGroup(group.id, { layout: event.target.value as ChildrenLayout })
+                      }
+                      className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                    >
+                      <option value="horizontal">Horizontal</option>
+                      <option value="vertical">Vertical</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => removeReportGroup(group.id)}
+                      disabled={reportGroups.length === 1 && reports.length > 0}
+                      title="Remove group"
+                      aria-label={`Remove ${group.label}`}
+                      className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                  {(reportsByGroup.get(group.id)?.length ?? 0) > 0 ? (
+                    <ul className="space-y-1">
+                      {reportsByGroup.get(group.id)?.map((report) => (
+                          <li key={report.id} className="flex items-center justify-between gap-2 text-xs text-gray-700">
+                            <span className="min-w-0 truncate">{toProfileTitleCase(report.full_name) || 'Staff Member'}</span>
+                            <span className="shrink-0 capitalize text-gray-400">{group.layout}</span>
+                          </li>
+                        ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-gray-400">No people assigned</p>
+                  )}
+                </div>
+              ))}
+              {reports.length > 0 && (
+                <div className="space-y-2 rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Assign each direct report</p>
+                  {reports.map((report) => (
+                    <label key={report.id} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate text-gray-700">
+                        {toProfileTitleCase(report.full_name) || 'Staff Member'}
+                      </span>
+                      <select
+                        aria-label={`Group for ${toProfileTitleCase(report.full_name) || 'staff member'}`}
+                        value={groupByReportId.get(report.id) ?? ''}
+                        onChange={(event) => assignReportToGroup(report.id, event.target.value)}
+                        className="max-w-[52%] rounded-md border border-gray-300 bg-white px-2 py-1 text-xs"
+                      >
+                        {reportGroups.map((group) => (
+                          <option key={group.id} value={group.id}>{group.label || 'Unnamed group'}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             {saveError && (
               <p role="alert" className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{saveError}</p>
             )}
@@ -255,7 +456,7 @@ export default function OrganizationChart() {
         .order('full_name'),
       supabase
         .from('org_chart_positions')
-        .select('profile_id,manager_id,chart_label,children_layout'),
+        .select('profile_id,manager_id,chart_label,children_layout,report_groups'),
     ]);
 
     if (peopleResult.error || placementResult.error) {
@@ -263,8 +464,8 @@ export default function OrganizationChart() {
         ?? placementResult.error?.message
         ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|is_focal_person|programs|org_chart_positions|chart_label|children_layout|schema cache|does not exist/i.test(message)
-          ? 'The organization chart database migrations are not installed. Run supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, and supabase/org_chart_layout_preferences_migration.sql in Supabase SQL Editor, then reload.'
+        /contact_phone|is_focal_person|programs|org_chart_positions|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
+          ? 'The organization chart database migrations are not installed. Run supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, supabase/org_chart_layout_preferences_migration.sql, and supabase/org_chart_mixed_report_groups_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
     } else {
@@ -334,37 +535,65 @@ export default function OrganizationChart() {
         .filter((child): child is LayoutNode => child !== null);
       const placement = placementById.get(profileId);
       const childrenLayout = placement?.children_layout === 'vertical' ? 'vertical' : 'horizontal';
-      const childOffsets: LayoutNode['children'] = [];
+      const childById = new Map(children.map((child) => [child.person.id, child]));
+      const reportGroups = normalizeReportGroups(
+        placement?.report_groups,
+        children.map((child) => child.person.id),
+        childrenLayout,
+      );
+      const groups: LayoutNode['groups'] = reportGroups.flatMap((group) => {
+        const groupChildren = group.member_ids
+          .map((childId) => childById.get(childId))
+          .filter((child): child is LayoutNode => child !== undefined);
+        if (groupChildren.length === 0) return [];
+
+        let groupWidth: number;
+        let groupHeight: number;
+        const childOffsets: LayoutNode['groups'][number]['children'] = [];
+        if (group.layout === 'horizontal') {
+          groupWidth = groupChildren.reduce((sum, child) => sum + child.width, 0)
+            + HORIZONTAL_GAP * (groupChildren.length - 1);
+          groupHeight = Math.max(...groupChildren.map((child) => child.height));
+          let childX = 0;
+          for (const child of groupChildren) {
+            childOffsets.push({ node: child, x: childX, y: 0 });
+            childX += child.width + HORIZONTAL_GAP;
+          }
+        } else {
+          groupWidth = Math.max(...groupChildren.map((child) => child.width));
+          groupHeight = groupChildren.reduce((sum, child) => sum + child.height, 0)
+            + VERTICAL_GAP * (groupChildren.length - 1);
+          let childY = 0;
+          for (const child of groupChildren) {
+            childOffsets.push({
+              node: child,
+              x: (groupWidth - child.width) / 2,
+              y: childY,
+            });
+            childY += child.height + VERTICAL_GAP;
+          }
+        }
+        return [{
+          id: group.id,
+          layout: group.layout,
+          x: 0,
+          width: groupWidth,
+          height: groupHeight,
+          children: childOffsets,
+        }];
+      });
+
       let width = CARD_WIDTH;
       let height = CARD_HEIGHT;
-
-      if (children.length > 0 && childrenLayout === 'horizontal') {
-        const childrenWidth = children.reduce((sum, child) => sum + child.width, 0)
-          + HORIZONTAL_GAP * (children.length - 1);
-        width = Math.max(CARD_WIDTH, childrenWidth);
-        height += VERTICAL_GAP + Math.max(...children.map((child) => child.height));
-        let childX = (width - childrenWidth) / 2;
-        for (const child of children) {
-          childOffsets.push({
-            node: child,
-            x: childX,
-            y: CARD_HEIGHT + VERTICAL_GAP,
-          });
-          childX += child.width + HORIZONTAL_GAP;
-        }
-      } else if (children.length > 0) {
-        width = Math.max(CARD_WIDTH, ...children.map((child) => child.width));
-        height += VERTICAL_GAP
-          + children.reduce((sum, child) => sum + child.height, 0)
-          + VERTICAL_GAP * (children.length - 1);
-        let childY = CARD_HEIGHT + VERTICAL_GAP;
-        for (const child of children) {
-          childOffsets.push({
-            node: child,
-            x: (width - child.width) / 2,
-            y: childY,
-          });
-          childY += child.height + VERTICAL_GAP;
+      if (groups.length > 0) {
+        const groupsWidth = groups.reduce((sum, group) => sum + group.width, 0)
+          + HORIZONTAL_GAP * (groups.length - 1);
+        width = Math.max(CARD_WIDTH, groupsWidth);
+        height += VERTICAL_GAP + Math.max(...groups.map((group) => group.height));
+        let groupX = (width - groupsWidth) / 2;
+        for (const group of groups) {
+          group.x = groupX;
+          groupX += group.width + HORIZONTAL_GAP;
         }
       }
 
@@ -373,9 +602,10 @@ export default function OrganizationChart() {
         manager_id: managerById.get(profileId) ?? null,
         chart_label: placement?.chart_label ?? null,
         children_layout: childrenLayout,
+        report_groups: reportGroups,
         width,
         height,
-        children: childOffsets,
+        groups,
       };
     };
 
@@ -399,8 +629,12 @@ export default function OrganizationChart() {
     const positionedPeople: PositionedPerson[] = [];
     const connectorGroups: Array<{
       managerId: string;
-      reportIds: string[];
-      layout: ChildrenLayout;
+      groups: Array<{
+        layout: ChildrenLayout;
+        x: number;
+        width: number;
+        reportIds: string[];
+      }>;
     }> = [];
     const placeNode = (node: LayoutNode, x: number, y: number, depth: number) => {
       const positioned: PositionedPerson = {
@@ -408,20 +642,32 @@ export default function OrganizationChart() {
         manager_id: node.manager_id,
         chart_label: node.chart_label,
         children_layout: node.children_layout,
+        report_groups: node.report_groups,
         x: x + (node.width - CARD_WIDTH) / 2,
         y,
         depth,
       };
       positionedPeople.push(positioned);
-      if (node.children.length > 0) {
+      if (node.groups.length > 0) {
         connectorGroups.push({
           managerId: positioned.id,
-          reportIds: node.children.map(({ node: child }) => child.person.id),
-          layout: node.children_layout,
+          groups: node.groups.map((group) => ({
+            layout: group.layout,
+            x: x + group.x,
+            width: group.width,
+            reportIds: group.children.map(({ node: child }) => child.person.id),
+          })),
         });
       }
-      for (const child of node.children) {
-        placeNode(child.node, x + child.x, y + child.y, depth + 1);
+      for (const group of node.groups) {
+        for (const child of group.children) {
+          placeNode(
+            child.node,
+            x + group.x + child.x,
+            y + CARD_HEIGHT + VERTICAL_GAP + child.y,
+            depth + 1,
+          );
+        }
       }
     };
 
@@ -432,13 +678,18 @@ export default function OrganizationChart() {
     }
 
     const positionedMap = new Map(positionedPeople.map((person) => [person.id, person]));
-    const connectors: ChartConnector[] = connectorGroups.flatMap(({ managerId, reportIds, layout: childrenLayout }) => {
+    const connectors: ChartConnector[] = connectorGroups.flatMap(({ managerId, groups }) => {
       const manager = positionedMap.get(managerId);
-      const reports = reportIds
-        .map((reportId) => positionedMap.get(reportId))
-        .filter((report): report is PositionedPerson => report !== undefined);
-      return manager && reports.length > 0
-        ? [{ manager, reports, layout: childrenLayout }]
+      const positionedGroups = groups.flatMap((group) => {
+        const reports = group.reportIds
+          .map((reportId) => positionedMap.get(reportId))
+          .filter((report): report is PositionedPerson => report !== undefined);
+        return reports.length > 0
+          ? [{ layout: group.layout, x: group.x, width: group.width, reports }]
+          : [];
+      });
+      return manager && positionedGroups.length > 0
+        ? [{ manager, groups: positionedGroups }]
         : [];
     });
 
@@ -449,7 +700,20 @@ export default function OrganizationChart() {
     person: PositionedPerson,
     chartLabel: string,
     childrenLayout: ChildrenLayout,
+    reportGroups: ReportGroup[],
   ) => {
+    const directReportIds = layout.positionedPeople
+      .filter((report) => report.manager_id === person.id)
+      .map((report) => report.id);
+    const normalizedGroups = normalizeReportGroups(
+      reportGroups,
+      directReportIds,
+      childrenLayout,
+    )
+      .map((group) => ({
+        ...group,
+        label: group.label.trim() || 'Unnamed group',
+      }));
     const { error: saveError } = await supabase
       .from('org_chart_positions')
       .upsert(
@@ -458,6 +722,7 @@ export default function OrganizationChart() {
           manager_id: person.manager_id,
           chart_label: chartLabel || null,
           children_layout: childrenLayout,
+          report_groups: normalizedGroups,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'profile_id' },
@@ -466,7 +731,12 @@ export default function OrganizationChart() {
 
     await fetchData();
     setSelectedPerson((current) => current?.id === person.id
-      ? { ...current, chart_label: chartLabel || null, children_layout: childrenLayout }
+      ? {
+          ...current,
+          chart_label: chartLabel || null,
+          children_layout: childrenLayout,
+          report_groups: normalizedGroups,
+        }
       : current);
   };
 
@@ -531,38 +801,43 @@ export default function OrganizationChart() {
                 height={canvasHeight}
                 viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
               >
-                {layout.connectors.map(({ manager, reports, layout: childrenLayout }) => {
+                {layout.connectors.map(({ manager, groups }) => {
                   const parentCenterX = manager.x + CARD_WIDTH / 2;
                   const parentBottom = manager.y + CARD_HEIGHT;
-                  let d: string;
-                  if (childrenLayout === 'vertical') {
-                    const sortedReports = [...reports].sort((a, b) => a.y - b.y);
-                    const trunkX = manager.x - 20;
-                    const trunkTop = parentBottom + 24;
-                    const branchYs = sortedReports.map((report) => report.y + CARD_HEIGHT / 2);
-                    d = [
-                      `M ${parentCenterX} ${parentBottom} V ${trunkTop} H ${trunkX}`,
-                      `M ${trunkX} ${trunkTop} V ${branchYs[branchYs.length - 1]}`,
-                      ...sortedReports.map(
-                        (report) => `M ${trunkX} ${report.y + CARD_HEIGHT / 2} H ${report.x}`,
-                      ),
-                    ].join(' ');
-                  } else {
-                    const sortedReports = [...reports].sort((a, b) => a.x - b.x);
-                    const childCenterXs = sortedReports.map((report) => report.x + CARD_WIDTH / 2);
-                    const busY = parentBottom + VERTICAL_GAP / 2;
-                    d = [
-                      `M ${parentCenterX} ${parentBottom} V ${busY}`,
-                      `M ${childCenterXs[0]} ${busY} H ${childCenterXs[childCenterXs.length - 1]}`,
-                      ...sortedReports.map(
-                        (report) => `M ${report.x + CARD_WIDTH / 2} ${busY} V ${report.y}`,
-                      ),
-                    ].join(' ');
+                  const busY = parentBottom + 24;
+                  const groupCenters = groups.map((group) => group.x + group.width / 2);
+                  const segments = [
+                    `M ${parentCenterX} ${parentBottom} V ${busY}`,
+                    `M ${Math.min(...groupCenters)} ${busY} H ${Math.max(...groupCenters)}`,
+                  ];
+                  for (const group of groups) {
+                    if (group.layout === 'vertical') {
+                      const reports = [...group.reports].sort((a, b) => a.y - b.y);
+                      const trunkX = group.x - 20;
+                      const lastReportCenterY = reports[reports.length - 1].y + CARD_HEIGHT / 2;
+                      segments.push(
+                        `M ${group.x + group.width / 2} ${busY} H ${trunkX} V ${lastReportCenterY}`,
+                        ...reports.map(
+                          (report) => `M ${trunkX} ${report.y + CARD_HEIGHT / 2} H ${report.x}`,
+                        ),
+                      );
+                    } else {
+                      const reports = [...group.reports].sort((a, b) => a.x - b.x);
+                      const childCenters = reports.map((report) => report.x + CARD_WIDTH / 2);
+                      const groupBusY = manager.y + CARD_HEIGHT + VERTICAL_GAP - 24;
+                      segments.push(
+                        `M ${group.x + group.width / 2} ${busY} V ${groupBusY}`,
+                        `M ${childCenters[0]} ${groupBusY} H ${childCenters[childCenters.length - 1]}`,
+                        ...reports.map(
+                          (report) => `M ${report.x + CARD_WIDTH / 2} ${groupBusY} V ${report.y}`,
+                        ),
+                      );
+                    }
                   }
                   return (
                     <path
                       key={manager.id}
-                      d={d}
+                      d={segments.join(' ')}
                       fill="none"
                       stroke="#60a5fa"
                       strokeWidth="2"
@@ -602,10 +877,11 @@ export default function OrganizationChart() {
       {selectedPerson && (
         <PersonnelDetailsModal
           person={selectedPerson}
+          reports={layout.positionedPeople.filter((person) => person.manager_id === selectedPerson.id)}
           onClose={() => setSelectedPerson(null)}
           isSuperAdmin={isSuperAdmin}
-          onSave={(chartLabel, childrenLayout) =>
-            saveChartSettings(selectedPerson, chartLabel, childrenLayout)
+          onSave={(chartLabel, childrenLayout, reportGroups) =>
+            saveChartSettings(selectedPerson, chartLabel, childrenLayout, reportGroups)
           }
         />
       )}
