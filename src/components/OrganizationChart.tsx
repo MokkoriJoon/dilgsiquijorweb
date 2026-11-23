@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -29,10 +29,22 @@ interface OrgPerson {
 interface OrgPlacement {
   profile_id: string;
   manager_id: string | null;
+  position_x: number | null;
+  position_y: number | null;
+}
+
+interface PositionedPlacement extends OrgPlacement {
+  person: OrgPerson;
+  x: number;
+  y: number;
 }
 
 const ROOT_DROP_ID = 'organization-chart-root';
 const POOL_DROP_ID = 'organization-chart-unplaced';
+const CARD_WIDTH = 230;
+const CARD_HEIGHT = 72;
+const GRID_COLUMN_GAP = 280;
+const GRID_ROW_GAP = 150;
 
 const chartCollisionDetection: CollisionDetection = (args) => {
   const collisions = pointerWithin(args);
@@ -72,7 +84,7 @@ function OrganizationPersonCard({
       style={{ transform: CSS.Transform.toString(transform) }}
       {...attributes}
       {...listeners}
-      className={`relative z-10 flex min-w-[210px] max-w-[250px] items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors hover:border-blue-400 hover:shadow-md ${
+      className={`relative z-10 flex h-[72px] w-[230px] items-center gap-3 overflow-hidden rounded-xl border bg-white p-3 text-left shadow-sm transition-colors hover:border-blue-400 hover:shadow-md ${
         isOver ? 'border-blue-600 ring-2 ring-blue-200' : 'border-gray-200'
       } ${isDragging ? 'z-20 opacity-40' : ''} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
       aria-label={`${person.full_name ?? 'Staff member'}${person.position ? `, ${toProfilePosition(person.position)}` : ''}. View personnel details.`}
@@ -158,6 +170,9 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<OrgPerson | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(900);
+  const chartViewportRef = useRef<HTMLDivElement>(null);
+  const markerId = `org-chart-arrow-${useId().replace(/:/g, '')}`;
 
   const fetchData = useCallback(async () => {
     const [peopleResult, placementResult] = await Promise.all([
@@ -166,13 +181,13 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
         .select('id,full_name,email,position,contact_phone,avatar_url,role')
         .eq('is_approved', true)
         .order('full_name'),
-      supabase.from('org_chart_positions').select('profile_id,manager_id'),
+      supabase.from('org_chart_positions').select('profile_id,manager_id,position_x,position_y'),
     ]);
 
     if (peopleResult.error || placementResult.error) {
       const message = peopleResult.error?.message ?? placementResult.error?.message ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|org_chart_positions|schema cache|does not exist/i.test(message)
+        /contact_phone|position_x|position_y|org_chart_positions|schema cache|does not exist/i.test(message)
           ? 'The organization chart database migration is not installed. Run supabase/organizational_chart_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
@@ -188,6 +203,15 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
     void fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    const element = chartViewportRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => setViewportWidth(element.clientWidth));
+    observer.observe(element);
+    setViewportWidth(element.clientWidth);
+    return () => observer.disconnect();
+  }, [loading]);
+
   useRealtimeTableChanges(
     'organization-chart',
     ['profiles', 'org_chart_positions'],
@@ -200,16 +224,37 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
     () => new Map(placements.map((placement) => [placement.profile_id, placement])),
     [placements],
   );
-  const childrenByManager = useMemo(() => {
-    const map = new Map<string | null, string[]>();
-    for (const placement of placements) {
-      const parentId = placement.manager_id && peopleById.has(placement.manager_id) ? placement.manager_id : null;
-      const children = map.get(parentId) ?? [];
-      children.push(placement.profile_id);
-      map.set(parentId, children);
-    }
-    return map;
-  }, [placements, peopleById]);
+  const positionedPlacements = useMemo(() => {
+    const ordered = placements
+      .filter((placement) => peopleById.has(placement.profile_id))
+      .sort((a, b) =>
+        (peopleById.get(a.profile_id)?.full_name ?? '').localeCompare(
+          peopleById.get(b.profile_id)?.full_name ?? '',
+        ),
+      );
+    return ordered.map((placement, index): PositionedPlacement => {
+      const person = peopleById.get(placement.profile_id)!;
+      return {
+        ...placement,
+        person,
+        x: placement.position_x ?? 32 + (index % 4) * GRID_COLUMN_GAP,
+        y: placement.position_y ?? 32 + Math.floor(index / 4) * GRID_ROW_GAP,
+      };
+    });
+  }, [peopleById, placements]);
+  const positionedById = useMemo(
+    () => new Map(positionedPlacements.map((placement) => [placement.profile_id, placement])),
+    [positionedPlacements],
+  );
+  const canvasWidth = Math.max(
+    800,
+    viewportWidth,
+    ...positionedPlacements.map((placement) => placement.x + CARD_WIDTH + 48),
+  );
+  const canvasHeight = Math.max(
+    480,
+    ...positionedPlacements.map((placement) => placement.y + CARD_HEIGHT + 48),
+  );
   const unplacedPeople = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return people.filter((person) => {
@@ -220,7 +265,41 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
   }, [people, placementById, query]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const updatePlacement = useCallback(async (profileId: string, managerId: string | null | undefined) => {
+  const nextAvailablePosition = useCallback(() => {
+    const occupied = positionedPlacements.map(({ x, y }) => ({ x, y }));
+    for (let index = 0; index <= occupied.length; index += 1) {
+      const candidate = {
+        x: 32 + (index % 4) * GRID_COLUMN_GAP,
+        y: 32 + Math.floor(index / 4) * GRID_ROW_GAP,
+      };
+      const overlaps = occupied.some(
+        (point) =>
+          candidate.x < point.x + CARD_WIDTH + 24 &&
+          candidate.x + CARD_WIDTH + 24 > point.x &&
+          candidate.y < point.y + CARD_HEIGHT + 24 &&
+          candidate.y + CARD_HEIGHT + 24 > point.y,
+      );
+      if (!overlaps) return candidate;
+    }
+    return { x: 32, y: 32 + (occupied.length + 1) * GRID_ROW_GAP };
+  }, [positionedPlacements]);
+
+  const positionFromDrop = useCallback((event: DragEndEvent) => {
+    const initial = event.active.rect.current.initial;
+    const viewport = chartViewportRef.current;
+    if (!initial || !viewport) return nextAvailablePosition();
+    const viewportRect = viewport.getBoundingClientRect();
+    return {
+      x: Math.max(16, initial.left + event.delta.x - viewportRect.left + viewport.scrollLeft),
+      y: Math.max(16, initial.top + event.delta.y - viewportRect.top + viewport.scrollTop),
+    };
+  }, [nextAvailablePosition]);
+
+  const updatePlacement = useCallback(async (
+    profileId: string,
+    managerId: string | null | undefined,
+    position?: { x: number; y: number },
+  ) => {
     setSaving(true);
     setError('');
     let saveError: { message: string } | null = null;
@@ -243,11 +322,19 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
         .delete()
         .eq('profile_id', profileId));
     } else {
+      const currentPosition = positionedById.get(profileId);
+      const nextPosition = position ?? (
+        currentPosition
+          ? { x: currentPosition.x, y: currentPosition.y }
+          : nextAvailablePosition()
+      );
       ({ error: saveError } = await supabase.from('org_chart_positions').upsert({
-          profile_id: profileId,
-          manager_id: managerId,
-          updated_at: new Date().toISOString(),
-        }));
+        profile_id: profileId,
+        manager_id: managerId,
+        position_x: nextPosition.x,
+        position_y: nextPosition.y,
+        updated_at: new Date().toISOString(),
+      }));
     }
     if (saveError) {
       setError(`Could not save the organization chart: ${saveError.message}`);
@@ -255,13 +342,15 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
       await fetchData();
     }
     setSaving(false);
-  }, [fetchData, placementById]);
+  }, [fetchData, nextAvailablePosition, placementById, positionedById]);
 
-  const onDragEnd = useCallback(async ({ active, over }: DragEndEvent) => {
+  const onDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
     if (!canManage) return;
     const profileId = String(active.id);
+    const position = positionFromDrop(event);
     if (!over) {
-      if (!placementById.has(profileId)) await updatePlacement(profileId, null);
+      await updatePlacement(profileId, placementById.get(profileId)?.manager_id ?? null, position);
       return;
     }
     const overId = String(over.id);
@@ -272,7 +361,7 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
 
     let managerId: string | null;
     if (overId === ROOT_DROP_ID) {
-      managerId = null;
+      managerId = placementById.get(profileId)?.manager_id ?? null;
     } else if (overId.startsWith('manager:')) {
       managerId = overId.slice('manager:'.length);
       if (managerId === profileId) {
@@ -294,62 +383,20 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
       return;
     }
 
-    if (placementById.get(profileId)?.manager_id === managerId) return;
-    await updatePlacement(profileId, managerId);
-  }, [canManage, placementById, updatePlacement]);
+    const currentPosition = positionedById.get(profileId);
+    if (
+      placementById.get(profileId)?.manager_id === managerId &&
+      currentPosition?.x === position.x &&
+      currentPosition?.y === position.y
+    ) return;
+    await updatePlacement(profileId, managerId, position);
+  }, [canManage, placementById, positionFromDrop, positionedById, updatePlacement]);
 
   const rootDrop = useDroppable({ id: ROOT_DROP_ID, disabled: !canManage });
   const poolDrop = useDroppable({ id: POOL_DROP_ID, disabled: !canManage });
-
-  function renderBranch(profileId: string, ancestors = new Set<string>()) {
-    const person = peopleById.get(profileId);
-    if (!person || ancestors.has(profileId)) return null;
-    const nextAncestors = new Set(ancestors);
-    nextAncestors.add(profileId);
-    const childIds = childrenByManager.get(profileId) ?? [];
-
-    return (
-      <div key={profileId} className="flex min-w-max flex-col items-center">
-        <div className="relative">
-          <OrganizationPersonCard
-            person={person}
-            onSelect={setSelectedPerson}
-            draggable={canManage}
-            dropTarget={canManage}
-          />
-          {canManage && (
-            <button
-              type="button"
-              onClick={() => updatePlacement(profileId, undefined)}
-              disabled={saving}
-              title="Remove from organizational chart"
-              aria-label={`Remove ${toProfileTitleCase(person.full_name) || 'staff member'} from chart`}
-              className="absolute -right-2 -top-2 z-20 inline-flex items-center gap-1 rounded-full border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-50"
-            >
-              <Trash2 size={12} /> Remove
-            </button>
-          )}
-        </div>
-        {childIds.length > 0 && (
-          <>
-            <div className="h-6 border-l-2 border-blue-300" />
-            <div className="flex justify-center border-t-2 border-blue-300">
-              {childIds.map((childId) => (
-                <div
-                  key={childId}
-                  className="relative flex flex-col items-center px-3 pt-6 before:absolute before:left-1/2 before:top-0 before:h-6 before:border-l-2 before:border-blue-300 after:absolute after:left-1/2 after:top-[17px] after:-translate-x-1/2 after:border-x-[6px] after:border-x-transparent after:border-t-[8px] after:border-t-blue-400 after:border-solid"
-                >
-                  {renderBranch(childId, nextAncestors)}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  const rootIds = childrenByManager.get(null) ?? [];
+  const connectors = positionedPlacements.filter(
+    (placement) => placement.manager_id && positionedById.has(placement.manager_id),
+  );
 
   return (
     <DndContext
@@ -437,31 +484,115 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
               </aside>
             )}
 
-            {rootIds.length === 0 ? (
-                <div
-                  ref={canManage ? rootDrop.setNodeRef : undefined}
-                  className={`grid min-h-[260px] w-full place-items-center rounded-xl border border-dashed p-6 text-center text-sm text-gray-500 ${
-                    canManage
-                      ? rootDrop.isOver
-                        ? 'border-blue-500 bg-blue-50 text-blue-800 ring-2 ring-blue-200'
-                        : 'border-gray-300 bg-slate-50'
-                      : 'border-gray-200 bg-white'
-                  }`}
-                >
-                  {people.length === 0
-                    ? 'No approved personnel are available to display.'
-                    : canManage
-                      ? 'Drop staff anywhere in this grid to add them to the chart.'
-                      : 'The organizational chart has not been set up yet.'}
+            {positionedPlacements.length === 0 && !canManage ? (
+              <div className="grid min-h-[260px] w-full place-items-center rounded-xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">
+                {people.length === 0
+                  ? 'No approved personnel are available to display.'
+                  : 'The organizational chart has not been set up yet.'}
               </div>
             ) : (
+              <div
+                ref={chartViewportRef}
+                className="w-full overflow-auto rounded-xl border border-gray-200 bg-slate-50"
+              >
                 <div
                   ref={canManage ? rootDrop.setNodeRef : undefined}
-                  className={`grid min-h-[260px] w-full grid-cols-1 content-start items-start justify-items-center gap-x-8 gap-y-10 overflow-x-auto rounded-xl p-6 sm:grid-cols-2 lg:grid-cols-3 ${
-                    canManage && rootDrop.isOver ? 'bg-blue-50 ring-2 ring-blue-200' : 'bg-slate-50'
-                  }`}
+                  className={`relative ${canManage && rootDrop.isOver ? 'ring-2 ring-inset ring-blue-300' : ''}`}
+                  style={{
+                    width: `${canvasWidth}px`,
+                    height: `${canvasHeight}px`,
+                    backgroundImage:
+                      'linear-gradient(to right, rgba(148, 163, 184, 0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.16) 1px, transparent 1px)',
+                    backgroundSize: '32px 32px',
+                  }}
                 >
-                  {rootIds.map((profileId) => renderBranch(profileId))}
+                  {canManage && positionedPlacements.length === 0 && (
+                    <p className="pointer-events-none absolute inset-0 grid place-items-center p-6 text-center text-sm text-gray-500">
+                      Drop staff anywhere in this chart to add them as top-level personnel.
+                    </p>
+                  )}
+                  {positionedPlacements.length > 0 && (
+                    <svg
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0"
+                      width={canvasWidth}
+                      height={canvasHeight}
+                      viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+                    >
+                      <defs>
+                        <marker
+                          id={markerId}
+                          markerWidth="8"
+                          markerHeight="8"
+                          refX="7"
+                          refY="4"
+                          orient="auto"
+                        >
+                          <path d="M0,0 L8,4 L0,8 Z" fill="#60a5fa" />
+                        </marker>
+                      </defs>
+                      {connectors.map((child) => {
+                        const parent = positionedById.get(child.manager_id!);
+                        if (!parent) return null;
+                        const parentCenter = {
+                          x: parent.x + CARD_WIDTH / 2,
+                          y: parent.y + CARD_HEIGHT / 2,
+                        };
+                        const childCenter = {
+                          x: child.x + CARD_WIDTH / 2,
+                          y: child.y + CARD_HEIGHT / 2,
+                        };
+                        const dx = childCenter.x - parentCenter.x;
+                        const dy = childCenter.y - parentCenter.y;
+                        const edgeRatio = Math.max(
+                          Math.abs(dx) / (CARD_WIDTH / 2),
+                          Math.abs(dy) / (CARD_HEIGHT / 2),
+                        );
+                        const edgeScale = edgeRatio === 0 ? 0 : 1 / edgeRatio;
+                        const startX = parentCenter.x + dx * edgeScale;
+                        const startY = parentCenter.y + dy * edgeScale;
+                        const endX = childCenter.x - dx * edgeScale;
+                        const endY = childCenter.y - dy * edgeScale;
+                        return (
+                          <path
+                            key={child.profile_id}
+                            d={`M ${startX} ${startY} C ${startX + dx * 0.35} ${startY + dy * 0.15}, ${endX - dx * 0.35} ${endY - dy * 0.15}, ${endX} ${endY}`}
+                            fill="none"
+                            stroke="#60a5fa"
+                            strokeWidth="2"
+                            markerEnd={`url(#${markerId})`}
+                          />
+                        );
+                      })}
+                    </svg>
+                  )}
+                  {positionedPlacements.map((placement) => (
+                    <div
+                      key={placement.profile_id}
+                      className="absolute z-10"
+                      style={{ left: placement.x, top: placement.y }}
+                    >
+                      <OrganizationPersonCard
+                        person={placement.person}
+                        onSelect={setSelectedPerson}
+                        draggable={canManage}
+                        dropTarget={canManage}
+                      />
+                      {canManage && (
+                        <button
+                          type="button"
+                          onClick={() => updatePlacement(placement.profile_id, undefined)}
+                          disabled={saving}
+                          title="Remove from organizational chart"
+                          aria-label={`Remove ${toProfileTitleCase(placement.person.full_name) || 'staff member'} from chart`}
+                          className="absolute -right-2 -top-2 z-20 inline-flex items-center gap-1 rounded-full border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <Trash2 size={12} /> Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </>
