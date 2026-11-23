@@ -76,11 +76,12 @@ const POOL_DROP_ID = 'organization-chart-unplaced';
 const CARD_WIDTH = 230;
 const CARD_HEIGHT = 72;
 const GRID_SIZE = 32;
+const SNAP_SIZE = 8;
 const GRID_COLUMN_GAP = GRID_SIZE * 9;
 const GRID_ROW_GAP = GRID_SIZE * 5;
 
 function snapToGrid(value: number) {
-  return Math.max(GRID_SIZE, Math.round(value / GRID_SIZE) * GRID_SIZE);
+  return Math.max(GRID_SIZE, Math.round(value / SNAP_SIZE) * SNAP_SIZE);
 }
 
 function sidePoint(placement: PositionedPlacement, side: ConnectorSide): ChartPoint {
@@ -869,8 +870,8 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                     width: `${canvasWidth}px`,
                     height: `${canvasHeight}px`,
                     backgroundImage:
-                      'linear-gradient(to right, rgba(148, 163, 184, 0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.16) 1px, transparent 1px)',
-                    backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
+                      'linear-gradient(to right, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to right, rgba(100, 116, 139, 0.22) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.22) 1px, transparent 1px)',
+                    backgroundSize: `${SNAP_SIZE}px ${SNAP_SIZE}px, ${SNAP_SIZE}px ${SNAP_SIZE}px, ${GRID_SIZE}px ${GRID_SIZE}px, ${GRID_SIZE}px ${GRID_SIZE}px`,
                   }}
                 >
                   {canManage && positionedPlacements.length === 0 && (
