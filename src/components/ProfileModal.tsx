@@ -5,7 +5,7 @@ import Avatar from './Avatar';
 import type { Profile } from '../lib/types';
 import { ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { toProfilePosition, toProfileTitleCase } from '../lib/case';
-import { X, User, Mail, Briefcase, ShieldCheck, CalendarDays, Hash, Camera, Loader2, Trash2 } from 'lucide-react';
+import { X, User, Mail, Briefcase, ShieldCheck, CalendarDays, Hash, Camera, Loader2, Trash2, Phone } from 'lucide-react';
 
 function formatDateTime(iso?: string | null): string {
   if (!iso) return '—';
@@ -36,6 +36,7 @@ export default function ProfileModal({
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(profile.full_name ?? '');
   const [position, setPosition] = useState(profile.position ?? '');
+  const [contactPhone, setContactPhone] = useState(profile.contact_phone ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile.avatar_url ?? null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -92,6 +93,7 @@ export default function ProfileModal({
       const patch = {
         full_name: toProfileTitleCase(fullName),
         position: toProfilePosition(position) || null,
+        contact_phone: contactPhone.trim() || null,
         avatar_url: nextAvatar,
       };
 
@@ -111,10 +113,13 @@ export default function ProfileModal({
 
       // Keep auth metadata roughly in sync (used as fallback for provisional profiles).
       supabase.auth
-        .updateUser({ data: { full_name: patch.full_name, position: patch.position } })
+        .updateUser({ data: { full_name: patch.full_name, position: patch.position, contact_phone: patch.contact_phone } })
         .catch(() => undefined);
 
       onUpdated?.(patch);
+      setFullName(patch.full_name);
+      setPosition(patch.position ?? '');
+      setContactPhone(patch.contact_phone ?? '');
       setAvatarUrl(nextAvatar);
       setPendingFile(null);
       setRemoveAvatar(false);
@@ -127,8 +132,9 @@ export default function ProfileModal({
   };
 
   const rows = [
-    { icon: User, label: 'Full Name', value: toProfileTitleCase(profile.full_name) || '—' },
-    { icon: Briefcase, label: 'Position / Designation', value: toProfilePosition(profile.position) || '—' },
+    { icon: User, label: 'Full Name', value: toProfileTitleCase(fullName) || '—' },
+    { icon: Briefcase, label: 'Position / Designation', value: toProfilePosition(position) || '—' },
+    { icon: Phone, label: 'Contact Number', value: contactPhone || '—' },
     { icon: Mail, label: 'Email', value: profile.email ?? '—' },
     { icon: CalendarDays, label: 'Date Created', value: formatDateTime(profile.created_at) },
   ];
@@ -145,7 +151,7 @@ export default function ProfileModal({
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <Avatar name={profile.full_name} src={displaySrc} size={48} />
+              <Avatar name={fullName} src={displaySrc} size={48} />
               {editing && (
                 <>
                   <button
@@ -167,7 +173,7 @@ export default function ProfileModal({
               )}
             </div>
             <div className="min-w-0">
-              <h2 className="font-bold text-gray-800 truncate">{toProfileTitleCase(profile.full_name) || 'Staff Member'}</h2>
+              <h2 className="font-bold text-gray-800 truncate">{toProfileTitleCase(fullName) || 'Staff Member'}</h2>
               <span
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold mt-0.5 ${ROLE_BADGE_CLASSES[profile.role]}`}
               >
@@ -254,6 +260,19 @@ export default function ProfileModal({
               />
             </div>
 
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-gray-400 font-semibold mb-1">
+                Contact Number
+              </label>
+              <input
+                type="tel"
+                value={contactPhone}
+                onChange={(e) => setContactPhone(e.target.value)}
+                placeholder="e.g., +63 912 345 6789"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+              />
+            </div>
+
             {/* Read-only email */}
             <p className="text-sm text-gray-500">
               <span className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold block">
@@ -268,6 +287,7 @@ export default function ProfileModal({
                   setEditing(false);
                   setFullName(profile.full_name ?? '');
                   setPosition(profile.position ?? '');
+                  setContactPhone(profile.contact_phone ?? '');
                   setAvatarUrl(profile.avatar_url ?? null);
                   setPendingFile(null);
                   setRemoveAvatar(false);

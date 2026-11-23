@@ -16,6 +16,7 @@ const FolderCategories = lazy(() => import('./pages/FolderCategories'));
 const Announcements = lazy(() => import('./pages/Announcements'));
 const SiteSettings = lazy(() => import('./pages/SiteSettings'));
 const PublicDashboard = lazy(() => import('./pages/PublicDashboard'));
+const OrganizationChartPage = lazy(() => import('./pages/OrganizationChartPage'));
 
 function PageLoader() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="folder-categories" element={<FolderCategories />} />
           <Route path="announcements" element={<Announcements />} />
           <Route path="users" element={<UserManagement />} />
+          <Route path="organization-chart" element={<OrganizationChartPage />} />
           <Route path="settings" element={<SiteSettings />} />
         </Route>
 

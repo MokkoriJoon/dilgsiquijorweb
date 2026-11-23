@@ -38,6 +38,7 @@ export function useAuth() {
           full_name: (user?.user_metadata?.full_name as string) ?? null,
           email: user?.email ?? null,
           position: (user?.user_metadata?.position as string) ?? null,
+          contact_phone: (user?.user_metadata?.contact_phone as string) ?? null,
           role: 'STANDARD' as UserRole,
           is_approved: false,
         }));

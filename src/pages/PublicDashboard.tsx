@@ -30,6 +30,7 @@ import { useSiteBranding } from '../lib/siteSettings';
 import { STATUS_META, FREQUENCY_OPTIONS, frequencyLabel } from '../lib/taskMeta';
 import { daysUntilEffectiveDeadline, effectiveDueDate, formatDueDate } from '../lib/useTasks';
 import type { Task, TaskFrequency } from '../lib/types';
+import OrganizationChart from '../components/OrganizationChart';
 
 /** Status-card filter used by the clickable dashboard cards. */
 type PubFilter = 'all' | 'pending' | 'completed' | 'overdue';
@@ -552,6 +553,9 @@ export default function PublicDashboard() {
         {/* Folder-style frequency browser — pick a frequency "folder" to see
             every task that repeats on it (resource links are NOT shown). */}
         <FrequencyBrowser tasks={pub.tasks} statusOf={pub.statusOf} />
+        <div className="mt-10">
+          <OrganizationChart />
+        </div>
       </main>
 
       {/* Footer — pinned to the bottom by the flex layout above */}

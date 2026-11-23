@@ -14,6 +14,7 @@ import {
   Settings2,
   Tags,
   Globe,
+  Network,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
@@ -111,6 +112,7 @@ export default function AppLayout() {
     // Announcements; standard users read them. Not tasks, never counted in
     // task totals anywhere.
     { to: '/app/announcements', label: 'Announcements', icon: Megaphone },
+    { to: '/app/organization-chart', label: 'Organizational Chart', icon: Network },
     { to: '/app/resources', label: 'Resource Links', icon: Bookmark },
     // Folder Categories — visible to ALL roles. Opens the task repository;
     // clicking a category folder shows every task under that category.

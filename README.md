@@ -112,6 +112,16 @@ the SQL Editor after the account-approval migration has been applied. New
 projects get this table from `supabase/schema.sql`. Deploy the website changes
 after the migration; no existing tasks are rewritten.
 
+### Organizational chart
+
+For an existing project, run `supabase/organizational_chart_migration.sql`
+once in the SQL Editor before deploying the organization-chart feature. It adds
+the staff contact phone field and reporting-relationship table without changing
+existing profile or task data. Super Admins can place staff and connect
+reporting lines from **User Management → Manage Organizational Chart**. The
+chart and personnel email/contact details are publicly visible on the public
+dashboard and in the authenticated sidebar view.
+
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
 
