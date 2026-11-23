@@ -12,6 +12,8 @@ interface OrgPerson {
   position: string | null;
   contact_phone: string | null;
   avatar_url: string | null;
+  is_focal_person: boolean;
+  programs: string[] | null;
 }
 
 interface OrgPlacement {
@@ -91,6 +93,23 @@ function PersonnelDetailsModal({
               </dd>
             </div>
           </div>
+          {person.is_focal_person && (
+            <div className="flex items-start gap-3">
+              <Users size={16} className="mt-0.5 flex-shrink-0 text-gray-400" />
+              <div className="min-w-0">
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Focal Person · Programs</dt>
+                {person.programs?.length ? (
+                  <ul className="mt-1 space-y-1 text-sm text-gray-800">
+                    {person.programs.map((program, index) => (
+                      <li key={`${program}-${index}`} className="break-words">{program}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <dd className="text-sm text-gray-500">No programs listed</dd>
+                )}
+              </div>
+            </div>
+          )}
         </dl>
       </div>
     </div>
@@ -110,7 +129,7 @@ export default function OrganizationChart() {
     const [peopleResult, placementResult] = await Promise.all([
       supabase
         .from('profiles')
-        .select('id,full_name,email,position,contact_phone,avatar_url')
+        .select('id,full_name,email,position,contact_phone,avatar_url,is_focal_person,programs')
         .eq('is_approved', true)
         .order('full_name'),
       supabase.from('org_chart_positions').select('profile_id,manager_id'),
@@ -121,8 +140,8 @@ export default function OrganizationChart() {
         ?? placementResult.error?.message
         ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|org_chart_positions|schema cache|does not exist/i.test(message)
-          ? 'The organization chart database migration is not installed. Run supabase/organizational_chart_migration.sql in Supabase SQL Editor, then reload.'
+        /contact_phone|is_focal_person|programs|org_chart_positions|schema cache|does not exist/i.test(message)
+          ? 'The organization chart database migrations are not installed. Run supabase/organizational_chart_migration.sql and supabase/focal_person_programs_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
     } else {

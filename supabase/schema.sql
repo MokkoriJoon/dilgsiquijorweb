@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   full_name TEXT,
   email TEXT UNIQUE,
   contact_phone TEXT,
+  is_focal_person BOOLEAN NOT NULL DEFAULT FALSE,
+  programs TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   position TEXT,   -- Position / Designation (formerly "office")
   role TEXT NOT NULL DEFAULT 'STANDARD'
     CHECK (role IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN')),
@@ -58,6 +60,9 @@ ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS contact_phone TEXT;
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS is_focal_person BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS programs TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
 
 -- Migration: rename the legacy "office" column to "position" (safe to re-run).
 DO $$
@@ -501,14 +506,27 @@ BEGIN
     v_role := 'STANDARD';
   END IF;
 
-  INSERT INTO public.profiles (id, full_name, email, position, role, is_approved)
+  INSERT INTO public.profiles (
+    id, full_name, email, position, role, is_approved, is_focal_person, programs
+  )
   VALUES (
     NEW.id,
     NEW.raw_user_meta_data ->> 'full_name',
     NEW.email,
     NEW.raw_user_meta_data ->> 'position',
     v_role,
-    v_is_approved
+    v_is_approved,
+    COALESCE(NEW.raw_user_meta_data ->> 'is_focal_person', 'false') = 'true',
+    CASE
+      WHEN jsonb_typeof(NEW.raw_user_meta_data -> 'programs') = 'array'
+           AND NEW.raw_user_meta_data ->> 'is_focal_person' = 'true'
+        THEN ARRAY(
+          SELECT btrim(program)
+          FROM jsonb_array_elements_text(NEW.raw_user_meta_data -> 'programs') AS submitted(program)
+          WHERE btrim(program) <> ''
+        )
+      ELSE ARRAY[]::TEXT[]
+    END
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
