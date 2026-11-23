@@ -2,8 +2,8 @@
  * Name / Title casing helpers.
  *
  * The app requires every NAME, TITLE and any the-like free-text label to be
- * written with an Uppercase First Letter (Title Case). Profile fields are
- * normalized on blur and save; other labels are normalized when saved.
+ * written with an Uppercase First Letter (Title Case). Profile names and
+ * designations are normalized consistently when loaded and saved.
  */
 
 const SMALL_WORDS = new Set([

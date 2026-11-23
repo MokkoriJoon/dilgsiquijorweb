@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT,
   email TEXT UNIQUE,
+  contact_phone TEXT,
   position TEXT,   -- Position / Designation (formerly "office")
   role TEXT NOT NULL DEFAULT 'STANDARD'
     CHECK (role IN ('STANDARD', 'ADMIN', 'SUPER_ADMIN')),
@@ -55,6 +56,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS contact_phone TEXT;
 
 -- Migration: rename the legacy "office" column to "position" (safe to re-run).
 DO $$
@@ -254,6 +257,19 @@ CREATE TABLE IF NOT EXISTS public.site_settings (
   footer_text      TEXT,
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 2g2) ORGANIZATIONAL CHART — one reporting relationship per profile.
+CREATE TABLE IF NOT EXISTS public.org_chart_positions (
+  profile_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+  manager_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT org_chart_positions_no_self_manager CHECK (profile_id <> manager_id)
+);
+ALTER TABLE public.org_chart_positions ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_org_chart_manager ON public.org_chart_positions (manager_id);
+GRANT SELECT ON public.org_chart_positions TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.org_chart_positions TO authenticated;
 -- NOTE: VALUES (...) is required before the ON CONFLICT clause.
 INSERT INTO public.site_settings (id)
 VALUES (1)
@@ -429,6 +445,7 @@ BEGIN
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.task_categories; EXCEPTION WHEN duplicate_object THEN NULL; END;
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.announcements; EXCEPTION WHEN duplicate_object THEN NULL; END;
     BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.task_occurrence_completions; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.org_chart_positions; EXCEPTION WHEN duplicate_object THEN NULL; END;
   END IF;
 END $$;
 
@@ -568,6 +585,15 @@ CREATE POLICY "Super admins manage all profiles"
   USING (public.get_current_role() = 'SUPER_ADMIN')
   WITH CHECK (public.get_current_role() = 'SUPER_ADMIN');
 
+DROP POLICY IF EXISTS "Organization chart publicly readable" ON public.org_chart_positions;
+CREATE POLICY "Organization chart publicly readable"
+  ON public.org_chart_positions FOR SELECT TO public USING (true);
+DROP POLICY IF EXISTS "Super admins manage organization chart" ON public.org_chart_positions;
+CREATE POLICY "Super admins manage organization chart"
+  ON public.org_chart_positions FOR ALL TO authenticated
+  USING (public.get_current_role() = 'SUPER_ADMIN')
+  WITH CHECK (public.get_current_role() = 'SUPER_ADMIN');
+
 -- A pending account can authenticate, but RLS denies all application data
 -- until an approved Super Admin changes profiles.is_approved to TRUE.
 DO $$
@@ -582,7 +608,8 @@ BEGIN
     'task_occurrence_completions',
     'bookmarks',
     'site_settings',
-    'announcements'
+    'announcements',
+    'org_chart_positions'
   ]
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS "Approved accounts only" ON public.%I', v_table);

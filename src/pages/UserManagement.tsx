@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/useAuth';
 import { supabase } from '../lib/supabase';
 import { emailRateLimitMessage } from '../lib/authErrors';
@@ -19,6 +20,7 @@ import {
   UserCheck,
   Clock3,
   Shuffle,
+  Network,
 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 
@@ -26,6 +28,7 @@ interface UserFormState {
   id?: string;
   full_name: string;
   email: string;
+  contact_phone: string;
   position: string;
   role: UserRole;
   password: string;
@@ -204,6 +207,7 @@ export default function UserManagement() {
     setForm({
       full_name: '',
       email: '',
+      contact_phone: '',
       position: '',
       role: 'STANDARD',
       password: '',
@@ -219,6 +223,7 @@ export default function UserManagement() {
       id: user.id,
       full_name: user.full_name ?? '',
       email: user.email ?? '',
+      contact_phone: user.contact_phone ?? '',
       position: user.position ?? '',
       role: user.role,
       password: '',
@@ -283,6 +288,7 @@ export default function UserManagement() {
         .update({
           full_name: cleanName,
           email: form.email.trim().toLowerCase(),
+          contact_phone: form.contact_phone.trim() || null,
           position: cleanPosition || null,
           role: form.role,
           updated_at: new Date().toISOString(),
@@ -321,6 +327,15 @@ export default function UserManagement() {
         }
       } else if (data) {
         setConfirmMailInfo({ email: form.email.trim().toLowerCase() });
+        if (form.contact_phone.trim()) {
+          const { error: contactError } = await supabase
+            .from('profiles')
+            .update({ contact_phone: form.contact_phone.trim() })
+            .eq('id', data);
+          if (contactError) {
+            setPageError(`Account created, but the contact number could not be saved: ${contactError.message}`);
+          }
+        }
       } else {
         err = 'Supabase did not return a user ID, so the account could not be confirmed as created.';
       }
@@ -389,12 +404,20 @@ export default function UserManagement() {
             Add staff, edit their details and roles, or remove accounts.
           </p>
         </div>
-        <button
-          onClick={openCreate}
-          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors self-start"
-        >
-          <Plus size={16} /> Add User
-        </button>
+        <div className="flex flex-wrap gap-2 self-start">
+          <Link
+            to="/app/organization-chart"
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50"
+          >
+            <Network size={16} /> Manage Organizational Chart
+          </Link>
+          <button
+            onClick={openCreate}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Plus size={16} /> Add User
+          </button>
+        </div>
       </div>
 
       {pageError && (
@@ -451,6 +474,7 @@ export default function UserManagement() {
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-500 border-b border-gray-100 bg-gray-50/60">
                   <th className="px-5 py-3 font-semibold">User</th>
                   <th className="px-5 py-3 font-semibold">Position</th>
+                  <th className="px-5 py-3 font-semibold">Contact</th>
                   <th className="px-5 py-3 font-semibold">Role</th>
                   <th className="px-5 py-3 font-semibold">Account</th>
                   <th className="px-5 py-3 font-semibold">Open Tasks</th>
@@ -487,6 +511,7 @@ export default function UserManagement() {
                     <td className="px-5 py-4 text-gray-600">
                       {user.position ? toProfilePosition(user.position) : '—'}
                     </td>
+                    <td className="px-5 py-4 text-gray-600">{user.contact_phone || '—'}</td>
                     <td className="px-5 py-4">
                       <span
                         className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${ROLE_BADGE_CLASSES[user.role]}`}
@@ -626,6 +651,18 @@ export default function UserManagement() {
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   placeholder="staff@dilg.gov.ph"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contact Number
+                </label>
+                <input
+                  type="tel"
+                  value={form.contact_phone}
+                  onChange={(e) => setForm({ ...form, contact_phone: e.target.value })}
+                  placeholder="e.g., +63 912 345 6789"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
               </div>
