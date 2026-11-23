@@ -10,7 +10,7 @@ import {
 } from '@dnd-kit/core';
 import type { CollisionDetection, DragEndEvent } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { Mail, Network, Phone, Users, X } from 'lucide-react';
+import { Mail, Network, Phone, Trash2, Users, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRealtimeTableChanges } from '../lib/realtime';
 import { toProfilePosition, toProfileTitleCase } from '../lib/case';
@@ -310,12 +310,26 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
 
     return (
       <div key={profileId} className="flex min-w-max flex-col items-center">
-        <OrganizationPersonCard
-          person={person}
-          onSelect={setSelectedPerson}
-          draggable={canManage}
-          dropTarget={canManage}
-        />
+        <div className="relative">
+          <OrganizationPersonCard
+            person={person}
+            onSelect={setSelectedPerson}
+            draggable={canManage}
+            dropTarget={canManage}
+          />
+          {canManage && (
+            <button
+              type="button"
+              onClick={() => updatePlacement(profileId, undefined)}
+              disabled={saving}
+              title="Remove from organizational chart"
+              aria-label={`Remove ${toProfileTitleCase(person.full_name) || 'staff member'} from chart`}
+              className="absolute -right-2 -top-2 z-20 inline-flex items-center gap-1 rounded-full border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 size={12} /> Remove
+            </button>
+          )}
+        </div>
         {childIds.length > 0 && (
           <>
             <div className="h-6 border-l-2 border-blue-300" />
