@@ -521,7 +521,7 @@ export default function UserManagement() {
                     </td>
                     <td className="px-5 py-4">
                       <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                        className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
                           user.is_approved
                             ? 'border-green-200 bg-green-50 text-green-700'
                             : 'border-amber-200 bg-amber-50 text-amber-700'

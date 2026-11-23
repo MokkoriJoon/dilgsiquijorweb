@@ -7,10 +7,15 @@ ALTER TABLE public.profiles
 CREATE TABLE IF NOT EXISTS public.org_chart_positions (
   profile_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
   manager_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  position_x DOUBLE PRECISION,
+  position_y DOUBLE PRECISION,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT org_chart_positions_no_self_manager CHECK (profile_id <> manager_id)
 );
+ALTER TABLE public.org_chart_positions
+  ADD COLUMN IF NOT EXISTS position_x DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS position_y DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_org_chart_manager
   ON public.org_chart_positions (manager_id);
