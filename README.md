@@ -117,11 +117,11 @@ after the migration; no existing tasks are rewritten.
 For an existing project, run `supabase/organizational_chart_migration.sql`
 once in the SQL Editor before deploying the organization-chart feature. It adds
 the staff contact phone field and organizational-chart tables without changing
-existing profile or task data. Super Admins choose each staff member's head or
-supervisor in **User Management**; the chart automatically arranges personnel
-and draws aligned reporting lines. The chart and personnel email/contact
-details, including focal-person programs, are publicly visible on the public
-dashboard and in the authenticated sidebar view.
+existing profile or task data. Super Admins can choose each staff member's
+supervisor in **User Management** or edit it directly from the chart. The chart
+automatically arranges personnel and draws aligned reporting lines. The chart
+and personnel email/contact details, including focal-person programs, are
+publicly visible on the public dashboard and in the authenticated sidebar view.
 
 Run `supabase/focal_person_programs_migration.sql` after the organizational-chart
 migration on existing projects and before deploying focal-person registration.

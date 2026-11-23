@@ -127,28 +127,55 @@ function normalizeReportGroups(
 function PersonnelDetailsModal({
   person,
   reports,
+  people,
   onClose,
   isSuperAdmin,
   onSave,
 }: {
   person: PositionedPerson;
   reports: PositionedPerson[];
+  people: PositionedPerson[];
   onClose: () => void;
   isSuperAdmin: boolean;
   onSave: (
     chartLabel: string,
+    managerId: string | null,
     defaultLayout: ChildrenLayout,
     reportGroups: ReportGroup[],
   ) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [chartLabel, setChartLabel] = useState(person.chart_label ?? '');
+  const [managerId, setManagerId] = useState(person.manager_id);
   const [defaultLayout, setDefaultLayout] = useState<ChildrenLayout>(person.children_layout);
   const [reportGroups, setReportGroups] = useState<ReportGroup[]>(() =>
     normalizeReportGroups(person.report_groups, reports.map((report) => report.id), person.children_layout),
   );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const managerIdsByPerson = useMemo(
+    () => new Map(people.map((member) => [member.id, member.manager_id])),
+    [people],
+  );
+  const descendantIds = useMemo(() => {
+    const childrenByManager = new Map<string, string[]>();
+    for (const [memberId, supervisorId] of managerIdsByPerson) {
+      if (!supervisorId) continue;
+      const children = childrenByManager.get(supervisorId) ?? [];
+      children.push(memberId);
+      childrenByManager.set(supervisorId, children);
+    }
+
+    const descendants = new Set<string>();
+    const pending = [...(childrenByManager.get(person.id) ?? [])];
+    while (pending.length > 0) {
+      const memberId = pending.pop();
+      if (!memberId || descendants.has(memberId)) continue;
+      descendants.add(memberId);
+      pending.push(...(childrenByManager.get(memberId) ?? []));
+    }
+    return descendants;
+  }, [managerIdsByPerson, person.id]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -162,7 +189,7 @@ function PersonnelDetailsModal({
     setSaving(true);
     setSaveError('');
     try {
-      await onSave(chartLabel.trim(), defaultLayout, reportGroups);
+      await onSave(chartLabel.trim(), managerId, defaultLayout, reportGroups);
       setIsEditing(false);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not save chart settings.');
@@ -173,6 +200,7 @@ function PersonnelDetailsModal({
 
   const startEditing = () => {
     setChartLabel(person.chart_label ?? '');
+    setManagerId(person.manager_id);
     setDefaultLayout(person.children_layout);
     setReportGroups(normalizeReportGroups(
       person.report_groups,
@@ -263,6 +291,27 @@ function PersonnelDetailsModal({
         </div>
         {isEditing ? (
           <div className="space-y-4 px-5 py-5">
+            <div>
+              <label htmlFor="org-chart-manager" className="mb-1 block text-sm font-medium text-gray-700">
+                Reports To / Head
+              </label>
+              <select
+                id="org-chart-manager"
+                value={managerId ?? ''}
+                onChange={(event) => setManagerId(event.target.value || null)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value="">No supervisor / Head</option>
+                {people
+                  .filter((member) => member.id !== person.id && !descendantIds.has(member.id))
+                  .map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {toProfileTitleCase(member.full_name) || 'Staff Member'}
+                      {member.position ? ` — ${toProfilePosition(member.position)}` : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
             <div>
               <label htmlFor="org-chart-label" className="mb-1 block text-sm font-medium text-gray-700">
                 Chart title / section badge
@@ -699,9 +748,35 @@ export default function OrganizationChart() {
   const saveChartSettings = async (
     person: PositionedPerson,
     chartLabel: string,
+    managerId: string | null,
     childrenLayout: ChildrenLayout,
     reportGroups: ReportGroup[],
   ) => {
+    const availableManagerIds = new Set(layout.positionedPeople.map((member) => member.id));
+    if (managerId && (!availableManagerIds.has(managerId) || managerId === person.id)) {
+      throw new Error('Choose a valid supervisor for this personnel.');
+    }
+
+    const childrenByManager = new Map<string, string[]>();
+    for (const member of layout.positionedPeople) {
+      if (!member.manager_id) continue;
+      const children = childrenByManager.get(member.manager_id) ?? [];
+      children.push(member.id);
+      childrenByManager.set(member.manager_id, children);
+    }
+
+    const descendants = new Set<string>();
+    const pending = [...(childrenByManager.get(person.id) ?? [])];
+    while (pending.length > 0) {
+      const currentId = pending.pop();
+      if (!currentId || descendants.has(currentId)) continue;
+      descendants.add(currentId);
+      pending.push(...(childrenByManager.get(currentId) ?? []));
+    }
+    if (managerId && descendants.has(managerId)) {
+      throw new Error('A person cannot report to someone already below them in the chart.');
+    }
+
     const directReportIds = layout.positionedPeople
       .filter((report) => report.manager_id === person.id)
       .map((report) => report.id);
@@ -719,7 +794,7 @@ export default function OrganizationChart() {
       .upsert(
         {
           profile_id: person.id,
-          manager_id: person.manager_id,
+          manager_id: managerId,
           chart_label: chartLabel || null,
           children_layout: childrenLayout,
           report_groups: normalizedGroups,
@@ -733,6 +808,7 @@ export default function OrganizationChart() {
     setSelectedPerson((current) => current?.id === person.id
       ? {
           ...current,
+          manager_id: managerId,
           chart_label: chartLabel || null,
           children_layout: childrenLayout,
           report_groups: normalizedGroups,
@@ -805,18 +881,14 @@ export default function OrganizationChart() {
                   const parentCenterX = manager.x + CARD_WIDTH / 2;
                   const parentBottom = manager.y + CARD_HEIGHT;
                   const busY = parentBottom + 24;
-                  const groupCenters = groups.map((group) => group.x + group.width / 2);
-                  const segments = [
-                    `M ${parentCenterX} ${parentBottom} V ${busY}`,
-                    `M ${Math.min(...groupCenters)} ${busY} H ${Math.max(...groupCenters)}`,
-                  ];
+                  const segments = [`M ${parentCenterX} ${parentBottom} V ${busY}`];
                   for (const group of groups) {
                     if (group.layout === 'vertical') {
                       const reports = [...group.reports].sort((a, b) => a.y - b.y);
                       const trunkX = group.x - 20;
                       const lastReportCenterY = reports[reports.length - 1].y + CARD_HEIGHT / 2;
                       segments.push(
-                        `M ${group.x + group.width / 2} ${busY} H ${trunkX} V ${lastReportCenterY}`,
+                        `M ${parentCenterX} ${busY} H ${trunkX} V ${lastReportCenterY}`,
                         ...reports.map(
                           (report) => `M ${trunkX} ${report.y + CARD_HEIGHT / 2} H ${report.x}`,
                         ),
@@ -826,7 +898,7 @@ export default function OrganizationChart() {
                       const childCenters = reports.map((report) => report.x + CARD_WIDTH / 2);
                       const groupBusY = manager.y + CARD_HEIGHT + VERTICAL_GAP - 24;
                       segments.push(
-                        `M ${group.x + group.width / 2} ${busY} V ${groupBusY}`,
+                        `M ${parentCenterX} ${busY} H ${group.x + group.width / 2} V ${groupBusY}`,
                         `M ${childCenters[0]} ${groupBusY} H ${childCenters[childCenters.length - 1]}`,
                         ...reports.map(
                           (report) => `M ${report.x + CARD_WIDTH / 2} ${groupBusY} V ${report.y}`,
@@ -878,10 +950,11 @@ export default function OrganizationChart() {
         <PersonnelDetailsModal
           person={selectedPerson}
           reports={layout.positionedPeople.filter((person) => person.manager_id === selectedPerson.id)}
+          people={layout.positionedPeople}
           onClose={() => setSelectedPerson(null)}
           isSuperAdmin={isSuperAdmin}
-          onSave={(chartLabel, childrenLayout, reportGroups) =>
-            saveChartSettings(selectedPerson, chartLabel, childrenLayout, reportGroups)
+          onSave={(chartLabel, managerId, childrenLayout, reportGroups) =>
+            saveChartSettings(selectedPerson, chartLabel, managerId, childrenLayout, reportGroups)
           }
         />
       )}
