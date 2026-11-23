@@ -116,12 +116,12 @@ after the migration; no existing tasks are rewritten.
 
 For an existing project, run `supabase/organizational_chart_migration.sql`
 once in the SQL Editor before deploying the organization-chart feature. It adds
-the staff contact phone field, reporting relationships, and saved chart
-positions, plus editable organizational-chart connectors, without changing
-existing profile or task data. Super Admins can arrange staff on the aligned
-grid and draw/edit connectors from **User Management → Manage Organizational
-Chart**. The chart and personnel email/contact details are publicly visible on
-the public dashboard and in the authenticated sidebar view.
+the staff contact phone field and organizational-chart tables without changing
+existing profile or task data. Super Admins choose each staff member's head or
+supervisor in **User Management**; the chart automatically arranges personnel
+and draws aligned reporting lines. The chart and personnel email/contact
+details are publicly visible on the public dashboard and in the authenticated
+sidebar view.
 
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
