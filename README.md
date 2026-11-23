@@ -129,6 +129,11 @@ It adds the profile fields and updates the signup trigger to save focal-person
 status and programs. Programs entered during registration or account management
 are displayed in that person's chart details.
 
+Run `supabase/org_chart_layout_preferences_migration.sql` on existing projects
+before deploying chart badge and layout controls. Super Admins can add a badge
+to a person and choose whether that person's direct reports are arranged
+horizontally or vertically.
+
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
 

@@ -269,13 +269,31 @@ CREATE TABLE IF NOT EXISTS public.org_chart_positions (
   manager_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   position_x DOUBLE PRECISION,
   position_y DOUBLE PRECISION,
+  chart_label TEXT,
+  children_layout TEXT NOT NULL DEFAULT 'horizontal',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT org_chart_positions_no_self_manager CHECK (profile_id <> manager_id)
+  CONSTRAINT org_chart_positions_no_self_manager CHECK (profile_id <> manager_id),
+  CONSTRAINT org_chart_positions_children_layout_check
+    CHECK (children_layout IN ('horizontal', 'vertical'))
 );
 ALTER TABLE public.org_chart_positions
   ADD COLUMN IF NOT EXISTS position_x DOUBLE PRECISION,
-  ADD COLUMN IF NOT EXISTS position_y DOUBLE PRECISION;
+  ADD COLUMN IF NOT EXISTS position_y DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS chart_label TEXT,
+  ADD COLUMN IF NOT EXISTS children_layout TEXT NOT NULL DEFAULT 'horizontal';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'org_chart_positions_children_layout_check'
+      AND conrelid = 'public.org_chart_positions'::regclass
+  ) THEN
+    ALTER TABLE public.org_chart_positions
+      ADD CONSTRAINT org_chart_positions_children_layout_check
+      CHECK (children_layout IN ('horizontal', 'vertical'));
+  END IF;
+END $$;
 ALTER TABLE public.org_chart_positions ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_org_chart_manager ON public.org_chart_positions (manager_id);
 GRANT SELECT ON public.org_chart_positions TO anon, authenticated;
