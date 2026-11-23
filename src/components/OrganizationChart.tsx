@@ -861,7 +861,12 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
             ) : (
               <div
                 ref={chartViewportRef}
-                className="w-full overflow-auto rounded-xl border border-gray-200 bg-slate-50"
+                title="Drag the bottom-right corner to resize the chart area"
+                className="w-full min-w-[320px] max-w-full min-h-[240px] overflow-auto rounded-xl border border-gray-200 bg-slate-50"
+                style={{
+                  resize: 'both',
+                  height: '480px',
+                }}
               >
                 <div
                   ref={canManage ? setChartCanvasRef : undefined}
