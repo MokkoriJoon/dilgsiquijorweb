@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   DndContext,
@@ -11,7 +11,7 @@ import {
 } from '@dnd-kit/core';
 import type { CollisionDetection, DragEndEvent } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { Mail, Network, Phone, Trash2, Users, X } from 'lucide-react';
+import { Mail, Network, PenLine, Phone, Trash2, Users, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useRealtimeTableChanges } from '../lib/realtime';
 import { toProfilePosition, toProfileTitleCase } from '../lib/case';
@@ -61,10 +61,9 @@ interface OrgConnector {
 }
 
 interface ConnectorDraft {
-  source_profile_id: string;
+  source_profile_id: string | null;
   source_side: ConnectorSide;
-  source: ChartPoint;
-  cursor: ChartPoint;
+  points: ChartPoint[];
 }
 
 interface ConnectorHandleDrag {
@@ -112,6 +111,26 @@ function connectorPoints(
     ...connector.waypoints,
     targetPlacement ? sidePoint(targetPlacement, connector.target_side) : { x: connector.target_x, y: connector.target_y },
   ];
+}
+
+function addOrthogonalSegment(points: ChartPoint[], end: ChartPoint): ChartPoint[] {
+  const start = points[points.length - 1];
+  if (!start || (start.x === end.x && start.y === end.y)) return points;
+  const result = [...points];
+  if (start.x !== end.x && start.y !== end.y) {
+    if (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)) {
+      result.push({ x: end.x, y: start.y });
+    } else {
+      result.push({ x: start.x, y: end.y });
+    }
+  }
+  const last = result[result.length - 1];
+  if (last.x !== end.x || last.y !== end.y) result.push(end);
+  return result;
+}
+
+function orthogonalPoints(points: ChartPoint[]): ChartPoint[] {
+  return points.slice(1).reduce(addOrthogonalSegment, points.slice(0, 1));
 }
 
 const chartCollisionDetection: CollisionDetection = (args) => {
@@ -240,11 +259,11 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
   const [query, setQuery] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<OrgPerson | null>(null);
   const [viewportWidth, setViewportWidth] = useState(900);
+  const [penMode, setPenMode] = useState(false);
   const [connectorDraft, setConnectorDraft] = useState<ConnectorDraft | null>(null);
   const [connectorHandleDrag, setConnectorHandleDrag] = useState<ConnectorHandleDrag | null>(null);
   const chartViewportRef = useRef<HTMLDivElement>(null);
   const chartCanvasRef = useRef<HTMLDivElement | null>(null);
-  const markerId = `org-chart-arrow-${useId().replace(/:/g, '')}`;
 
   const fetchData = useCallback(async () => {
     const [peopleResult, placementResult, connectorResult] = await Promise.all([
@@ -441,48 +460,50 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
     setSaving(false);
   }, [fetchData]);
 
-  const beginConnector = useCallback((
-    event: ReactPointerEvent<HTMLButtonElement>,
-    profileId: string,
-    side: ConnectorSide,
-  ) => {
+  const beginCanvasDrawing = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!canManage || !penMode) return;
     event.preventDefault();
-    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    const placement = positionedById.get(profileId);
-    if (!placement) return;
-    const source = sidePoint(placement, side);
+    const pointer = toCanvasPoint(event.clientX, event.clientY);
+    const attachment = findAttachTarget(pointer);
+    const source = attachment?.point ?? {
+      x: snapToGrid(pointer.x),
+      y: snapToGrid(pointer.y),
+    };
     setConnectorDraft({
-      source_profile_id: profileId,
-      source_side: side,
-      source,
-      cursor: toCanvasPoint(event.clientX, event.clientY),
+      source_profile_id: attachment?.profileId ?? null,
+      source_side: attachment?.side ?? 'left',
+      points: [source],
     });
-  }, [positionedById, toCanvasPoint]);
+  }, [canManage, findAttachTarget, penMode, toCanvasPoint]);
 
-  const moveConnectorDraft = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+  const moveCanvasDrawing = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     if (!connectorDraft) return;
-    const point = toCanvasPoint(event.clientX, event.clientY);
-    setConnectorDraft((draft) => draft ? { ...draft, cursor: point } : null);
+    const pointer = toCanvasPoint(event.clientX, event.clientY);
+    const point = { x: snapToGrid(pointer.x), y: snapToGrid(pointer.y) };
+    setConnectorDraft((draft) => draft
+      ? { ...draft, points: addOrthogonalSegment(draft.points, point) }
+      : null);
   }, [connectorDraft, toCanvasPoint]);
 
-  const finishConnector = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+  const finishCanvasDrawing = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     if (!connectorDraft) return;
-    const cursor = toCanvasPoint(event.clientX, event.clientY);
-    const target = findAttachTarget(cursor);
-    if (Math.hypot(cursor.x - connectorDraft.source.x, cursor.y - connectorDraft.source.y) >= 24) {
-      const endPoint = target?.point ?? { x: snapToGrid(cursor.x), y: snapToGrid(cursor.y) };
+    const pointer = toCanvasPoint(event.clientX, event.clientY);
+    const target = findAttachTarget(pointer);
+    const endPoint = target?.point ?? { x: snapToGrid(pointer.x), y: snapToGrid(pointer.y) };
+    const points = addOrthogonalSegment(connectorDraft.points, endPoint);
+    if (points.length > 1) {
       void saveConnector({
         id: '',
         source_profile_id: connectorDraft.source_profile_id,
         source_side: connectorDraft.source_side,
-        source_x: connectorDraft.source.x,
-        source_y: connectorDraft.source.y,
+        source_x: points[0].x,
+        source_y: points[0].y,
         target_profile_id: target?.profileId ?? null,
         target_side: target?.side ?? 'left',
         target_x: endPoint.x,
         target_y: endPoint.y,
-        waypoints: [],
+        waypoints: points.slice(1, -1),
       }, true);
     }
     setConnectorDraft(null);
@@ -716,10 +737,10 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
       ? connectorHandleDrag.connector
       : connector,
   );
-  const connectorGeometry = displayConnectors.map((connector) => ({
-    connector,
-    points: connectorPoints(connector, positionedById),
-  }));
+  const connectorGeometry = displayConnectors.map((connector) => {
+    const points = connectorPoints(connector, positionedById);
+    return { connector, points, route: orthogonalPoints(points) };
+  });
   const setChartCanvasRef = (node: HTMLDivElement | null) => {
     chartCanvasRef.current = node;
     rootDrop.setNodeRef(node);
@@ -742,9 +763,28 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
             </p>
           </div>
           {canManage && (
-            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-              {saving ? 'Saving chart…' : 'Super Admin · Drag to organize'}
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPenMode((active) => !active);
+                  setConnectorDraft(null);
+                }}
+                aria-pressed={penMode}
+                title={penMode ? 'Exit line drawing mode' : 'Draw lines on the chart grid'}
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                  penMode
+                    ? 'border-green-700 bg-green-700 text-white'
+                    : 'border-green-200 bg-white text-green-700 hover:bg-green-50'
+                }`}
+              >
+                <PenLine size={16} />
+                {penMode ? 'Done drawing' : 'Draw lines'}
+              </button>
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                {saving ? 'Saving chart…' : 'Super Admin · Drag to organize'}
+              </span>
+            </div>
           )}
         </div>
 
@@ -768,7 +808,7 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                       <Users size={16} /> Staff not yet placed
                     </h3>
                     <p className="mt-1 text-xs text-gray-500">
-                      Drop staff onto the grid to place them. Drag the green handles around a person to draw connections; add green bend points on a line to route it.
+                      Drop staff onto the grid to place them. Select Draw lines to sketch right-angle connections on the grid.
                       Drag a placed member here to remove them from the chart.
                     </p>
                   </div>
@@ -838,42 +878,44 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                       Drop staff anywhere in this chart to add them as top-level personnel.
                     </p>
                   )}
-                  {positionedPlacements.length > 0 && (
-                    <svg
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-0"
-                      width={canvasWidth}
-                      height={canvasHeight}
-                      viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
-                    >
-                      <defs>
-                        <marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                          <path d="M0,0 L8,4 L0,8 Z" fill="#16a34a" />
-                        </marker>
-                      </defs>
-                      {connectorGeometry.map(({ connector, points }) => (
-                        <path
-                          key={connector.id}
-                          d={points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')}
-                          fill="none"
-                          stroke="#16a34a"
-                          strokeWidth="2.5"
-                          markerEnd={`url(#${markerId})`}
-                        />
-                      ))}
-                      {connectorDraft && (
-                        <path
-                          d={`M ${connectorDraft.source.x} ${connectorDraft.source.y} L ${connectorDraft.cursor.x} ${connectorDraft.cursor.y}`}
-                          fill="none"
-                          stroke="#16a34a"
-                          strokeWidth="2.5"
-                          strokeDasharray="6 4"
-                          markerEnd={`url(#${markerId})`}
-                        />
-                      )}
-                    </svg>
-                  )}
-                  {connectorGeometry.map(({ connector, points }) => (
+                  <svg
+                    aria-label={penMode ? 'Draw orthogonal chart lines' : undefined}
+                    className={`absolute inset-0 z-20 ${
+                      canManage && penMode ? 'pointer-events-auto cursor-crosshair touch-none' : 'pointer-events-none'
+                    }`}
+                    width={canvasWidth}
+                    height={canvasHeight}
+                    viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+                    onPointerDown={beginCanvasDrawing}
+                    onPointerMove={moveCanvasDrawing}
+                    onPointerUp={finishCanvasDrawing}
+                    onPointerCancel={() => setConnectorDraft(null)}
+                  >
+                    {canManage && penMode && (
+                      <rect width={canvasWidth} height={canvasHeight} fill="transparent" />
+                    )}
+                    {connectorGeometry.map(({ connector, route }) => (
+                      <path
+                        key={connector.id}
+                        d={route.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')}
+                        fill="none"
+                        stroke="#16a34a"
+                        strokeWidth="2.5"
+                      />
+                    ))}
+                    {connectorDraft && (
+                      <path
+                        d={orthogonalPoints(connectorDraft.points)
+                          .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+                          .join(' ')}
+                        fill="none"
+                        stroke="#16a34a"
+                        strokeWidth="2.5"
+                        strokeDasharray="6 4"
+                      />
+                    )}
+                  </svg>
+                  {!penMode && connectorGeometry.map(({ connector, points }) => (
                     <div key={`handles:${connector.id}`} className="pointer-events-none absolute inset-0 z-20">
                       {points.map((point, pointIndex) => (
                         <button
@@ -950,35 +992,6 @@ export default function OrganizationChart({ canManage = false }: { canManage?: b
                         draggable={canManage}
                         dropTarget={canManage}
                       />
-                      {canManage && (['top', 'right', 'bottom', 'left'] as const).map((side) => {
-                        const offsets: Record<ConnectorSide, string> = {
-                          top: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2',
-                          right: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2',
-                          bottom: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2',
-                          left: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2',
-                        };
-                        return (
-                          <button
-                            key={`port:${side}`}
-                            type="button"
-                            aria-label={`Draw connector from ${side} side`}
-                            title={`Drag to draw a connector from the ${side} side`}
-                            onPointerDown={(event) => beginConnector(event, placement.profile_id, side)}
-                            onPointerMove={(event) => {
-                              event.stopPropagation();
-                              moveConnectorDraft(event);
-                            }}
-                            onPointerUp={(event) => {
-                              event.stopPropagation();
-                              finishConnector(event);
-                            }}
-                            onPointerCancel={() => setConnectorDraft(null)}
-                            className={`absolute ${offsets[side]} z-30 grid h-5 w-5 place-items-center rounded-full border-2 border-white bg-green-600 text-xs font-bold leading-none text-white shadow hover:scale-125 active:cursor-grabbing`}
-                          >
-                            +
-                          </button>
-                        );
-                      })}
                       {canManage && (
                         <button
                           type="button"
