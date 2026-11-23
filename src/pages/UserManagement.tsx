@@ -6,6 +6,7 @@ import { emailRateLimitMessage } from '../lib/authErrors';
 import type { Profile, UserRole } from '../lib/types';
 import { USER_ROLES, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../lib/types';
 import { toProfilePosition, toProfileTitleCase } from '../lib/case';
+import FocalProgramsField from '../components/FocalProgramsField';
 import {
   Users,
   Plus,
@@ -30,6 +31,8 @@ interface UserFormState {
   email: string;
   contact_phone: string;
   position: string;
+  is_focal_person: boolean;
+  programs: string[];
   role: UserRole;
   password: string;
   confirmPassword: string;
@@ -224,6 +227,8 @@ export default function UserManagement() {
       email: '',
       contact_phone: '',
       position: '',
+      is_focal_person: false,
+      programs: [],
       role: 'STANDARD',
       password: '',
       confirmPassword: '',
@@ -240,6 +245,8 @@ export default function UserManagement() {
       email: user.email ?? '',
       contact_phone: user.contact_phone ?? '',
       position: user.position ?? '',
+      is_focal_person: user.is_focal_person ?? false,
+      programs: user.programs ?? [],
       role: user.role,
       password: '',
       confirmPassword: '',
@@ -317,6 +324,9 @@ export default function UserManagement() {
     // Names / positions are stored with an Uppercase First Letter.
     const cleanName = toProfileTitleCase(form.full_name);
     const cleanPosition = toProfilePosition(form.position);
+    const cleanPrograms = form.is_focal_person
+      ? [...new Set(form.programs.map((program) => program.trim()).filter(Boolean))]
+      : [];
 
     if (!cleanName) return setFormError('Full name is required.');
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
@@ -330,6 +340,7 @@ export default function UserManagement() {
 
     setSaving(true);
     let err: string | null = null;
+    let postCreateWarning: string | null = null;
 
     if (form.id) {
       // Update profile info + role (allowed by the SUPER_ADMIN RLS policy)
@@ -340,6 +351,8 @@ export default function UserManagement() {
           email: form.email.trim().toLowerCase(),
           contact_phone: form.contact_phone.trim() || null,
           position: cleanPosition || null,
+          is_focal_person: form.is_focal_person,
+          programs: cleanPrograms,
           role: form.role,
           updated_at: new Date().toISOString(),
         })
@@ -377,13 +390,17 @@ export default function UserManagement() {
         }
       } else if (data) {
         setConfirmMailInfo({ email: form.email.trim().toLowerCase() });
-        if (form.contact_phone.trim()) {
-          const { error: contactError } = await supabase
+        {
+          const { error: profileDetailsError } = await supabase
             .from('profiles')
-            .update({ contact_phone: form.contact_phone.trim() })
+            .update({
+              contact_phone: form.contact_phone.trim() || null,
+              is_focal_person: form.is_focal_person,
+              programs: cleanPrograms,
+            })
             .eq('id', data);
-          if (contactError) {
-            setPageError(`Account created, but the contact number could not be saved: ${contactError.message}`);
+          if (profileDetailsError) {
+            postCreateWarning = `Account created, but the contact and focal-person details could not be saved: ${profileDetailsError.message}`;
           }
         }
       } else {
@@ -399,6 +416,7 @@ export default function UserManagement() {
     setShowModal(false);
     setForm(null);
     loadUsers();
+    if (postCreateWarning) setPageError(postCreateWarning);
   }
 
   async function confirmDelete() {
@@ -519,7 +537,7 @@ export default function UserManagement() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px] text-sm">
+            <table className="w-full min-w-[1200px] text-sm" style={{ zoom: 0.8 }}>
               <thead className="whitespace-nowrap">
                 <tr className="text-left text-xs uppercase tracking-wider text-gray-500 border-b border-gray-100 bg-gray-50/60">
                   <th className="px-5 py-3 font-semibold">User</th>
@@ -750,6 +768,16 @@ export default function UserManagement() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
               </div>
+              <FocalProgramsField
+                isFocalPerson={form.is_focal_person}
+                programs={form.programs}
+                onFocalPersonChange={(isFocalPerson) =>
+                  setForm((current) => current ? { ...current, is_focal_person: isFocalPerson } : current)
+                }
+                onProgramsChange={(programs) =>
+                  setForm((current) => current ? { ...current, programs } : current)
+                }
+              />
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Role *

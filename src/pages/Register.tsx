@@ -7,6 +7,7 @@ import { UserPlus, Mail, Lock, User, Briefcase, ArrowLeft, Loader2, Check, X } f
 import { useSiteBranding } from '../lib/siteSettings';
 import { BrandLogo } from './Login';
 import PasswordInput from '../components/PasswordInput';
+import FocalProgramsField from '../components/FocalProgramsField';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -18,6 +19,8 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [position, setPosition] = useState('');
+  const [isFocalPerson, setIsFocalPerson] = useState(false);
+  const [programs, setPrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -95,6 +98,8 @@ export default function Register() {
             full_name: fullName,
             position: toProfilePosition(position),
             role: 'STANDARD',
+            is_focal_person: isFocalPerson,
+            programs: isFocalPerson ? programs : [],
           },
         },
       });
@@ -254,6 +259,13 @@ export default function Register() {
                     />
                   </div>
                 </div>
+
+                <FocalProgramsField
+                  isFocalPerson={isFocalPerson}
+                  programs={programs}
+                  onFocalPersonChange={setIsFocalPerson}
+                  onProgramsChange={setPrograms}
+                />
 
                 {/* Password */}
                 <div>

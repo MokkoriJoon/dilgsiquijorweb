@@ -120,8 +120,14 @@ the staff contact phone field and organizational-chart tables without changing
 existing profile or task data. Super Admins choose each staff member's head or
 supervisor in **User Management**; the chart automatically arranges personnel
 and draws aligned reporting lines. The chart and personnel email/contact
-details are publicly visible on the public dashboard and in the authenticated
-sidebar view.
+details, including focal-person programs, are publicly visible on the public
+dashboard and in the authenticated sidebar view.
+
+Run `supabase/focal_person_programs_migration.sql` after the organizational-chart
+migration on existing projects and before deploying focal-person registration.
+It adds the profile fields and updates the signup trigger to save focal-person
+status and programs. Programs entered during registration or account management
+are displayed in that person's chart details.
 
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).

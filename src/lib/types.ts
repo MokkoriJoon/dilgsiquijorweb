@@ -22,6 +22,8 @@ export interface Profile {
   full_name: string | null;
   email: string | null;
   contact_phone?: string | null;
+  is_focal_person?: boolean;
+  programs?: string[] | null;
   /** Position / Designation of the staff member (formerly "Office / Department"). */
   position: string | null;
   role: UserRole;
