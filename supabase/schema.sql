@@ -326,6 +326,8 @@ CREATE TABLE IF NOT EXISTS public.org_chart_connectors (
   target_x DOUBLE PRECISION NOT NULL,
   target_y DOUBLE PRECISION NOT NULL,
   waypoints JSONB NOT NULL DEFAULT '[]'::JSONB,
+  line_style TEXT NOT NULL DEFAULT 'solid'
+    CHECK (line_style IN ('solid', 'dashed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
