@@ -34,8 +34,14 @@ interface OrgPlacement {
   report_groups: ReportGroup[] | null;
 }
 
+interface SecondarySupervisor {
+  profile_id: string;
+  supervisor_id: string;
+}
+
 interface PositionedPerson extends OrgPerson {
   manager_id: string | null;
+  additional_supervisor_ids: string[];
   chart_label: string | null;
   children_layout: ChildrenLayout;
   report_groups: ReportGroup[];
@@ -70,6 +76,12 @@ interface ChartConnector {
     width: number;
     reports: PositionedPerson[];
   }>;
+}
+
+interface MatrixConnector {
+  supervisor: PositionedPerson;
+  report: PositionedPerson;
+  index: number;
 }
 
 const CARD_WIDTH = 230;
@@ -140,6 +152,7 @@ function PersonnelDetailsModal({
   onSave: (
     chartLabel: string,
     managerId: string | null,
+    additionalSupervisorIds: string[],
     defaultLayout: ChildrenLayout,
     reportGroups: ReportGroup[],
   ) => Promise<void>;
@@ -147,23 +160,27 @@ function PersonnelDetailsModal({
   const [isEditing, setIsEditing] = useState(false);
   const [chartLabel, setChartLabel] = useState(person.chart_label ?? '');
   const [managerId, setManagerId] = useState(person.manager_id);
+  const [additionalSupervisorIds, setAdditionalSupervisorIds] = useState<string[]>(
+    person.additional_supervisor_ids.filter((id) => id !== person.manager_id),
+  );
   const [defaultLayout, setDefaultLayout] = useState<ChildrenLayout>(person.children_layout);
   const [reportGroups, setReportGroups] = useState<ReportGroup[]>(() =>
     normalizeReportGroups(person.report_groups, reports.map((report) => report.id), person.children_layout),
   );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const managerIdsByPerson = useMemo(
-    () => new Map(people.map((member) => [member.id, member.manager_id])),
-    [people],
-  );
   const descendantIds = useMemo(() => {
     const childrenByManager = new Map<string, string[]>();
-    for (const [memberId, supervisorId] of managerIdsByPerson) {
-      if (!supervisorId) continue;
-      const children = childrenByManager.get(supervisorId) ?? [];
-      children.push(memberId);
-      childrenByManager.set(supervisorId, children);
+    for (const member of people) {
+      const supervisorIds = new Set([
+        ...(member.manager_id ? [member.manager_id] : []),
+        ...member.additional_supervisor_ids,
+      ]);
+      for (const supervisorId of supervisorIds) {
+        const children = childrenByManager.get(supervisorId) ?? [];
+        children.push(member.id);
+        childrenByManager.set(supervisorId, children);
+      }
     }
 
     const descendants = new Set<string>();
@@ -175,7 +192,7 @@ function PersonnelDetailsModal({
       pending.push(...(childrenByManager.get(memberId) ?? []));
     }
     return descendants;
-  }, [managerIdsByPerson, person.id]);
+  }, [people, person.id]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -189,7 +206,13 @@ function PersonnelDetailsModal({
     setSaving(true);
     setSaveError('');
     try {
-      await onSave(chartLabel.trim(), managerId, defaultLayout, reportGroups);
+      await onSave(
+        chartLabel.trim(),
+        managerId,
+        additionalSupervisorIds.filter((id) => id !== managerId),
+        defaultLayout,
+        reportGroups,
+      );
       setIsEditing(false);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not save chart settings.');
@@ -201,6 +224,9 @@ function PersonnelDetailsModal({
   const startEditing = () => {
     setChartLabel(person.chart_label ?? '');
     setManagerId(person.manager_id);
+    setAdditionalSupervisorIds(
+      person.additional_supervisor_ids.filter((id) => id !== person.manager_id),
+    );
     setDefaultLayout(person.children_layout);
     setReportGroups(normalizeReportGroups(
       person.report_groups,
@@ -298,7 +324,11 @@ function PersonnelDetailsModal({
               <select
                 id="org-chart-manager"
                 value={managerId ?? ''}
-                onChange={(event) => setManagerId(event.target.value || null)}
+                onChange={(event) => {
+                  const nextManagerId = event.target.value || null;
+                  setManagerId(nextManagerId);
+                  setAdditionalSupervisorIds((ids) => ids.filter((id) => id !== nextManagerId));
+                }}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               >
                 <option value="">No supervisor / Head</option>
@@ -312,6 +342,39 @@ function PersonnelDetailsModal({
                   ))}
               </select>
             </div>
+            <fieldset>
+              <legend className="mb-1 block text-sm font-medium text-gray-700">
+                Additional supervisors
+              </legend>
+              <p className="mb-2 text-xs text-gray-500">
+                Dashed connectors show matrix-reporting relationships. The primary supervisor controls chart placement.
+              </p>
+              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2">
+                {people
+                  .filter((member) =>
+                    member.id !== person.id
+                    && member.id !== managerId
+                    && !descendantIds.has(member.id))
+                  .map((member) => (
+                    <label key={member.id} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={additionalSupervisorIds.includes(member.id)}
+                        onChange={(event) => setAdditionalSupervisorIds((ids) =>
+                          event.target.checked
+                            ? [...ids, member.id]
+                            : ids.filter((id) => id !== member.id),
+                        )}
+                        className="rounded border-gray-300 text-blue-700 focus:ring-blue-500"
+                      />
+                      <span className="min-w-0 truncate text-gray-700">
+                        {toProfileTitleCase(member.full_name) || 'Staff Member'}
+                        {member.position ? ` — ${toProfilePosition(member.position)}` : ''}
+                      </span>
+                    </label>
+                  ))}
+              </div>
+            </fieldset>
             <div>
               <label htmlFor="org-chart-label" className="mb-1 block text-sm font-medium text-gray-700">
                 Chart title / section badge
@@ -490,6 +553,7 @@ export default function OrganizationChart() {
   const { isSuperAdmin } = useAuth();
   const [people, setPeople] = useState<OrgPerson[]>([]);
   const [placements, setPlacements] = useState<OrgPlacement[]>([]);
+  const [secondarySupervisors, setSecondarySupervisors] = useState<SecondarySupervisor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<PositionedPerson | null>(null);
@@ -497,7 +561,7 @@ export default function OrganizationChart() {
   const chartViewportRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
-    const [peopleResult, placementResult] = await Promise.all([
+    const [peopleResult, placementResult, supervisorResult] = await Promise.all([
       supabase
         .from('profiles')
         .select('id,full_name,email,position,contact_phone,avatar_url,is_focal_person,programs')
@@ -506,21 +570,26 @@ export default function OrganizationChart() {
       supabase
         .from('org_chart_positions')
         .select('profile_id,manager_id,chart_label,children_layout,report_groups'),
+      supabase
+        .from('org_chart_supervisors')
+        .select('profile_id,supervisor_id'),
     ]);
 
-    if (peopleResult.error || placementResult.error) {
+    if (peopleResult.error || placementResult.error || supervisorResult.error) {
       const message = peopleResult.error?.message
         ?? placementResult.error?.message
+        ?? supervisorResult.error?.message
         ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|is_focal_person|programs|org_chart_positions|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
-          ? 'The organization chart database migrations are not installed. Run supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, supabase/org_chart_layout_preferences_migration.sql, and supabase/org_chart_mixed_report_groups_migration.sql in Supabase SQL Editor, then reload.'
+        /contact_phone|is_focal_person|programs|org_chart_positions|org_chart_supervisors|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
+          ? 'The organization chart database migrations are not installed. Run the migrations in supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, supabase/org_chart_layout_preferences_migration.sql, supabase/org_chart_mixed_report_groups_migration.sql, and supabase/org_chart_multiple_supervisors_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
     } else {
       setError('');
       setPeople((peopleResult.data ?? []) as OrgPerson[]);
       setPlacements((placementResult.data ?? []) as OrgPlacement[]);
+      setSecondarySupervisors((supervisorResult.data ?? []) as SecondarySupervisor[]);
     }
     setLoading(false);
   }, []);
@@ -540,7 +609,7 @@ export default function OrganizationChart() {
 
   useRealtimeTableChanges(
     'organization-chart',
-    ['profiles', 'org_chart_positions'],
+    ['profiles', 'org_chart_positions', 'org_chart_supervisors'],
     fetchData,
     60_000,
   );
@@ -553,6 +622,12 @@ export default function OrganizationChart() {
     const managerById = new Map(
       placements.map((placement) => [placement.profile_id, placement.manager_id]),
     );
+    const supervisorsByPerson = new Map<string, string[]>();
+    for (const relationship of secondarySupervisors) {
+      const current = supervisorsByPerson.get(relationship.profile_id) ?? [];
+      current.push(relationship.supervisor_id);
+      supervisorsByPerson.set(relationship.profile_id, current);
+    }
     const childrenByManager = new Map<string, string[]>();
     for (const person of people) {
       const managerId = managerById.get(person.id);
@@ -689,6 +764,7 @@ export default function OrganizationChart() {
       const positioned: PositionedPerson = {
         ...node.person,
         manager_id: node.manager_id,
+        additional_supervisor_ids: supervisorsByPerson.get(node.person.id) ?? [],
         chart_label: node.chart_label,
         children_layout: node.children_layout,
         report_groups: node.report_groups,
@@ -742,27 +818,47 @@ export default function OrganizationChart() {
         : [];
     });
 
-    return { positionedPeople, connectors };
-  }, [people, placements]);
+    const positionedById = new Map(positionedPeople.map((person) => [person.id, person]));
+    const matrixConnectors: MatrixConnector[] = [];
+    for (const report of positionedPeople) {
+      for (const supervisorId of report.additional_supervisor_ids) {
+        const supervisor = positionedById.get(supervisorId);
+        if (!supervisor || supervisor.id === report.manager_id) continue;
+        matrixConnectors.push({ supervisor, report, index: matrixConnectors.length });
+      }
+    }
+
+    return { positionedPeople, connectors, matrixConnectors };
+  }, [people, placements, secondarySupervisors]);
 
   const saveChartSettings = async (
     person: PositionedPerson,
     chartLabel: string,
     managerId: string | null,
+    additionalSupervisorIds: string[],
     childrenLayout: ChildrenLayout,
     reportGroups: ReportGroup[],
   ) => {
     const availableManagerIds = new Set(layout.positionedPeople.map((member) => member.id));
-    if (managerId && (!availableManagerIds.has(managerId) || managerId === person.id)) {
-      throw new Error('Choose a valid supervisor for this personnel.');
+    const supervisorIds = [...new Set(additionalSupervisorIds)]
+      .filter((id) => id !== managerId);
+    if ([managerId, ...supervisorIds].some(
+      (id) => id && (!availableManagerIds.has(id) || id === person.id),
+    )) {
+      throw new Error('Choose valid supervisors for this personnel.');
     }
 
     const childrenByManager = new Map<string, string[]>();
     for (const member of layout.positionedPeople) {
-      if (!member.manager_id) continue;
-      const children = childrenByManager.get(member.manager_id) ?? [];
-      children.push(member.id);
-      childrenByManager.set(member.manager_id, children);
+      const currentSupervisors = new Set([
+        ...(member.manager_id ? [member.manager_id] : []),
+        ...member.additional_supervisor_ids,
+      ]);
+      for (const currentSupervisorId of currentSupervisors) {
+        const children = childrenByManager.get(currentSupervisorId) ?? [];
+        children.push(member.id);
+        childrenByManager.set(currentSupervisorId, children);
+      }
     }
 
     const descendants = new Set<string>();
@@ -773,7 +869,7 @@ export default function OrganizationChart() {
       descendants.add(currentId);
       pending.push(...(childrenByManager.get(currentId) ?? []));
     }
-    if (managerId && descendants.has(managerId)) {
+    if ([managerId, ...supervisorIds].some((id) => id && descendants.has(id))) {
       throw new Error('A person cannot report to someone already below them in the chart.');
     }
 
@@ -789,19 +885,14 @@ export default function OrganizationChart() {
         ...group,
         label: group.label.trim() || 'Unnamed group',
       }));
-    const { error: saveError } = await supabase
-      .from('org_chart_positions')
-      .upsert(
-        {
-          profile_id: person.id,
-          manager_id: managerId,
-          chart_label: chartLabel || null,
-          children_layout: childrenLayout,
-          report_groups: normalizedGroups,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'profile_id' },
-      );
+    const { error: saveError } = await supabase.rpc('save_org_chart_settings', {
+      p_profile_id: person.id,
+      p_manager_id: managerId,
+      p_chart_label: chartLabel || null,
+      p_children_layout: childrenLayout,
+      p_report_groups: normalizedGroups,
+      p_additional_supervisor_ids: supervisorIds,
+    });
     if (saveError) throw new Error(saveError.message);
 
     await fetchData();
@@ -809,6 +900,7 @@ export default function OrganizationChart() {
       ? {
           ...current,
           manager_id: managerId,
+          additional_supervisor_ids: supervisorIds,
           chart_label: chartLabel || null,
           children_layout: childrenLayout,
           report_groups: normalizedGroups,
@@ -916,6 +1008,24 @@ export default function OrganizationChart() {
                     />
                   );
                 })}
+                {layout.matrixConnectors.map(({ supervisor, report, index }) => {
+                  const targetX = report.x - 16 - (index % 3) * 8;
+                  const targetCenterY = report.y + CARD_HEIGHT / 2;
+                  const supervisorCenterX = supervisor.x + CARD_WIDTH / 2;
+                  const path = supervisor.y <= report.y
+                    ? `M ${supervisorCenterX} ${supervisor.y + CARD_HEIGHT} V ${supervisor.y + CARD_HEIGHT + 20} H ${targetX} V ${targetCenterY} H ${report.x}`
+                    : `M ${supervisorCenterX} ${supervisor.y} V ${report.y - 20} H ${targetX} V ${targetCenterY} H ${report.x}`;
+                  return (
+                    <path
+                      key={`${supervisor.id}-${report.id}`}
+                      d={path}
+                      fill="none"
+                      stroke="#8b5cf6"
+                      strokeWidth="2"
+                      strokeDasharray="6 4"
+                    />
+                  );
+                })}
               </svg>
               {layout.positionedPeople.map((person) => (
                 <button
@@ -953,10 +1063,23 @@ export default function OrganizationChart() {
           people={layout.positionedPeople}
           onClose={() => setSelectedPerson(null)}
           isSuperAdmin={isSuperAdmin}
-          onSave={(chartLabel, managerId, childrenLayout, reportGroups) =>
-            saveChartSettings(selectedPerson, chartLabel, managerId, childrenLayout, reportGroups)
+          onSave={(chartLabel, managerId, additionalSupervisorIds, childrenLayout, reportGroups) =>
+            saveChartSettings(
+              selectedPerson,
+              chartLabel,
+              managerId,
+              additionalSupervisorIds,
+              childrenLayout,
+              reportGroups,
+            )
           }
         />
+      )}
+      {layout.matrixConnectors.length > 0 && (
+        <p className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+          <span aria-hidden="true" className="w-6 border-t-2 border-dashed border-violet-500" />
+          Dashed lines indicate additional supervisor relationships.
+        </p>
       )}
     </>
   );
