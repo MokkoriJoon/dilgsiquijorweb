@@ -139,6 +139,11 @@ can group a person's direct reports, choose horizontal or vertical arrangement
 per group, and set a default for future reports. Each supervisor can have a
 different combination of layouts.
 
+Run `supabase/org_chart_multiple_supervisors_migration.sql` before deploying
+matrix reporting. Each person keeps one primary supervisor for chart placement
+and may have additional supervisors, shown as dashed connectors to the same
+personnel card.
+
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
 
