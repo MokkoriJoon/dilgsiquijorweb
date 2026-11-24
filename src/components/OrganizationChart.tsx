@@ -103,6 +103,19 @@ const CARD_HEIGHT = 72;
 const HORIZONTAL_GAP = 64;
 const VERTICAL_GAP = 104;
 const CHART_MARGIN = 32;
+const NAME_TEXT_WIDTH = CARD_WIDTH - 24 - 48 - 12;
+let nameMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+function getNameFontSize(name: string): number {
+  if (nameMeasureContext === undefined) {
+    nameMeasureContext = document.createElement('canvas').getContext('2d');
+  }
+  if (!nameMeasureContext) return 14;
+  nameMeasureContext.font = '600 14px ui-sans-serif, system-ui, sans-serif';
+  const textWidth = nameMeasureContext.measureText(name).width;
+  return Math.min(14, 14 * NAME_TEXT_WIDTH / textWidth);
+}
+
 function routePathFromPoints(points: Point[]): string {
   if (points.length === 0) return '';
   const commands = [`M ${points[0].x} ${points[0].y}`];
@@ -1388,35 +1401,41 @@ export default function OrganizationChart() {
                   />
                 )}
               </svg>
-              {layout.positionedPeople.map((person) => (
-                <button
-                  key={person.id}
-                  type="button"
-                  onClick={() => setSelectedPerson(person)}
-                  aria-label={`${toProfileTitleCase(person.full_name) || 'Staff Member'}${person.position ? `, ${toProfilePosition(person.position)}` : ''}. View personnel details.`}
-                  className="absolute z-10 flex h-[72px] w-[230px] items-center gap-3 overflow-hidden rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm transition-colors hover:border-blue-400 hover:shadow-md"
-                  style={{
-                    left: person.x,
-                    top: person.y,
-                    pointerEvents: drawMode ? 'none' : 'auto',
-                  }}
-                >
-                  <Avatar name={person.full_name} src={person.avatar_url} size={48} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-gray-800">
-                      {toProfileTitleCase(person.full_name) || 'Staff Member'}
-                    </span>
-                    <span className="mt-0.5 block truncate text-xs text-gray-500">
-                      {toProfilePosition(person.position) || 'Position not set'}
-                    </span>
-                  </span>
-                  {(person.chart_label?.trim() || (person.depth === 0 ? 'HEAD' : '')) && (
-                    <span className="absolute right-2 top-1 rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-700">
-                      {person.chart_label?.trim() || 'HEAD'}
-                    </span>
-                  )}
-                </button>
-              ))}
+              {layout.positionedPeople.map((person) => {
+                const displayName = toProfileTitleCase(person.full_name) || 'Staff Member';
+                return (
+                    <button
+                      key={person.id}
+                      type="button"
+                      onClick={() => setSelectedPerson(person)}
+                      aria-label={`${displayName}${person.position ? `, ${toProfilePosition(person.position)}` : ''}. View personnel details.`}
+                      className="absolute z-10 flex h-[72px] w-[230px] items-center gap-3 overflow-hidden rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm transition-colors hover:border-blue-400 hover:shadow-md"
+                      style={{
+                        left: person.x,
+                        top: person.y,
+                        pointerEvents: drawMode ? 'none' : 'auto',
+                      }}
+                    >
+                      <Avatar name={person.full_name} src={person.avatar_url} size={48} />
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className="block whitespace-nowrap font-semibold leading-tight text-gray-800"
+                          style={{ fontSize: `${getNameFontSize(displayName)}px` }}
+                        >
+                          {displayName}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-gray-500">
+                          {toProfilePosition(person.position) || 'Position not set'}
+                        </span>
+                      </span>
+                      {(person.chart_label?.trim() || (person.depth === 0 ? 'HEAD' : '')) && (
+                        <span className="absolute right-2 top-1 rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-700">
+                          {person.chart_label?.trim() || 'HEAD'}
+                        </span>
+                      )}
+                    </button>
+                );
+              })}
               </div>
             </div>
           </div>
