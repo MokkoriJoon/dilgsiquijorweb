@@ -802,7 +802,7 @@ function PersonnelDetailsModal({
                     })}
                   </dd>
                   <p className="mt-1 text-xs text-gray-500">
-                    Dashed chart lines are drawn separately by a Super Admin.
+                    Dashed chart lines.
                   </p>
                 </div>
               </div>
