@@ -104,16 +104,17 @@ const HORIZONTAL_GAP = 64;
 const VERTICAL_GAP = 104;
 const CHART_MARGIN = 32;
 const NAME_TEXT_WIDTH = CARD_WIDTH - 24 - 48 - 12;
+const POSITION_TEXT_WIDTH = NAME_TEXT_WIDTH;
 let nameMeasureContext: CanvasRenderingContext2D | null | undefined;
 
-function getNameFontSize(name: string): number {
+function getTextFontSize(text: string, baseFontSize: number, width: number, fontWeight: number): number {
   if (nameMeasureContext === undefined) {
     nameMeasureContext = document.createElement('canvas').getContext('2d');
   }
-  if (!nameMeasureContext) return 14;
-  nameMeasureContext.font = '600 14px ui-sans-serif, system-ui, sans-serif';
-  const textWidth = nameMeasureContext.measureText(name).width;
-  return Math.min(14, 14 * NAME_TEXT_WIDTH / textWidth);
+  if (!nameMeasureContext || !text) return baseFontSize;
+  nameMeasureContext.font = `${fontWeight} ${baseFontSize}px ui-sans-serif, system-ui, sans-serif`;
+  const textWidth = nameMeasureContext.measureText(text).width;
+  return Math.min(baseFontSize, baseFontSize * width / textWidth);
 }
 
 function routePathFromPoints(points: Point[]): string {
@@ -1403,6 +1404,7 @@ export default function OrganizationChart() {
               </svg>
               {layout.positionedPeople.map((person) => {
                 const displayName = toProfileTitleCase(person.full_name) || 'Staff Member';
+                const displayPosition = toProfilePosition(person.position) || 'Position not set';
                 return (
                     <button
                       key={person.id}
@@ -1420,12 +1422,19 @@ export default function OrganizationChart() {
                       <span className="min-w-0 flex-1">
                         <span
                           className="block whitespace-nowrap font-semibold leading-tight text-gray-800"
-                          style={{ fontSize: `${getNameFontSize(displayName)}px` }}
+                          style={{
+                            fontSize: `${getTextFontSize(displayName, 14, NAME_TEXT_WIDTH, 600)}px`,
+                          }}
                         >
                           {displayName}
                         </span>
-                        <span className="mt-0.5 block truncate text-xs text-gray-500">
-                          {toProfilePosition(person.position) || 'Position not set'}
+                        <span
+                          className="mt-0.5 block whitespace-nowrap leading-tight text-gray-500"
+                          style={{
+                            fontSize: `${getTextFontSize(displayPosition, 12, POSITION_TEXT_WIDTH, 400)}px`,
+                          }}
+                        >
+                          {displayPosition}
                         </span>
                       </span>
                       {(person.chart_label?.trim() || (person.depth === 0 ? 'HEAD' : '')) && (
