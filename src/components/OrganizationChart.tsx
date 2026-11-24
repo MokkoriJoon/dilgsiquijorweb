@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check, Mail, Network, Pencil, Phone, Plus, Save, Trash2, Users, X,
 } from 'lucide-react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import { useRealtimeTableChanges } from '../lib/realtime';
 import { toProfilePosition, toProfileTitleCase } from '../lib/case';
@@ -40,14 +40,12 @@ interface OrgPlacement {
 interface SecondarySupervisor {
   profile_id: string;
   supervisor_id: string;
-  connector_mode: ConnectorMode;
   manual_waypoints: Point[] | null;
 }
 
 interface PositionedPerson extends OrgPerson {
   manager_id: string | null;
   additional_supervisor_ids: string[];
-  matrix_connector_mode: ConnectorMode;
   chart_label: string | null;
   children_layout: ChildrenLayout;
   report_groups: ReportGroup[];
@@ -87,7 +85,6 @@ interface ChartConnector {
 interface MatrixConnector {
   supervisor: PositionedPerson;
   report: PositionedPerson;
-  connector_mode: ConnectorMode;
   manual_waypoints: Point[] | null;
 }
 
@@ -110,30 +107,12 @@ interface RouteRectangle {
   bottom: number;
 }
 
-interface RouteQueueEntry {
-  node: number;
-  cost: number;
-  priority: number;
-}
-
-interface RouteNeighbor {
-  node: number;
-  cost: number;
-}
-
-interface RouteSegment {
-  from: Point;
-  to: Point;
-}
-
 interface MatrixConnectorPort {
   supervisorSide: CardSide;
   supervisorPoint: Point;
   reportSide: CardSide;
   reportPoint: Point;
 }
-
-type ConnectorMode = 'automatic' | 'manual';
 
 const CARD_WIDTH = 230;
 const CARD_HEIGHT = 72;
@@ -143,7 +122,6 @@ const CHART_MARGIN = 32;
 const CONNECTOR_PORT_PADDING = 12;
 const CONNECTOR_STUB_LENGTH = 18;
 const CONNECTOR_CLEARANCE = 12;
-const CONNECTOR_LANE_PENALTY = 2000;
 
 function nearestCardSideToPoint(card: PositionedPerson, other: Point): CardSide {
   const deltaX = other.x - (card.x + CARD_WIDTH / 2);
@@ -299,45 +277,6 @@ function manualConnectorPath(
   };
 }
 
-function pushRouteQueue(queue: RouteQueueEntry[], entry: RouteQueueEntry) {
-  let index = queue.length;
-  queue.push(entry);
-  while (index > 0) {
-    const parentIndex = Math.floor((index - 1) / 2);
-    if (queue[parentIndex].priority <= entry.priority) break;
-    queue[index] = queue[parentIndex];
-    index = parentIndex;
-  }
-  queue[index] = entry;
-}
-
-function popRouteQueue(queue: RouteQueueEntry[]): RouteQueueEntry | undefined {
-  const first = queue[0];
-  const last = queue.pop();
-  if (!first || !last || queue.length === 0) return first;
-  let index = 0;
-  while (true) {
-    const left = index * 2 + 1;
-    const right = left + 1;
-    if (left >= queue.length) break;
-    const child = right < queue.length && queue[right].priority < queue[left].priority
-      ? right
-      : left;
-    if (queue[child].priority >= last.priority) break;
-    queue[index] = queue[child];
-    index = child;
-  }
-  queue[index] = last;
-  return first;
-}
-
-function isInsideRouteRectangle(point: Point, rectangles: RouteRectangle[]): boolean {
-  return rectangles.some((rectangle) =>
-    point.x > rectangle.left && point.x < rectangle.right
-    && point.y > rectangle.top && point.y < rectangle.bottom,
-  );
-}
-
 function isRouteSegmentClear(
   from: Point,
   to: Point,
@@ -355,179 +294,32 @@ function isRouteSegmentClear(
   });
 }
 
-function getPrimaryConnectorSegments(connectors: ChartConnector[]): RouteSegment[] {
-  const segments: RouteSegment[] = [];
-  const add = (from: Point, to: Point) => {
-    if (from.x !== to.x || from.y !== to.y) segments.push({ from, to });
-  };
-  for (const { manager, groups } of connectors) {
-    const parentCenterX = manager.x + CARD_WIDTH / 2;
-    const parentBottom = manager.y + CARD_HEIGHT;
-    const busY = parentBottom + 24;
-    add({ x: parentCenterX, y: parentBottom }, { x: parentCenterX, y: busY });
-    for (const group of groups) {
-      if (group.layout === 'vertical') {
-        const reports = [...group.reports].sort((a, b) => a.y - b.y);
-        const trunkX = group.x - 20;
-        const lastReportCenterY = reports[reports.length - 1].y + CARD_HEIGHT / 2;
-        add({ x: parentCenterX, y: busY }, { x: trunkX, y: busY });
-        add({ x: trunkX, y: busY }, { x: trunkX, y: lastReportCenterY });
-        for (const report of reports) {
-          add(
-            { x: trunkX, y: report.y + CARD_HEIGHT / 2 },
-            { x: report.x, y: report.y + CARD_HEIGHT / 2 },
-          );
-        }
-      } else {
-        const reports = [...group.reports].sort((a, b) => a.x - b.x);
-        const childCenters = reports.map((report) => report.x + CARD_WIDTH / 2);
-        const groupBusY = manager.y + CARD_HEIGHT + VERTICAL_GAP - 24;
-        add(
-          { x: parentCenterX, y: busY },
-          { x: group.x + group.width / 2, y: busY },
-        );
-        add(
-          { x: group.x + group.width / 2, y: busY },
-          { x: group.x + group.width / 2, y: groupBusY },
-        );
-        add(
-          { x: childCenters[0], y: groupBusY },
-          { x: childCenters[childCenters.length - 1], y: groupBusY },
-        );
-        for (const report of reports) {
-          add(
-            { x: report.x + CARD_WIDTH / 2, y: groupBusY },
-            { x: report.x + CARD_WIDTH / 2, y: report.y },
-          );
-        }
-      }
-    }
+function simplifyStrokePoints(points: Point[]): Point[] {
+  if (points.length <= 2) return points;
+  const simplified = [points[0]];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = simplified[simplified.length - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    const dx = next.x - previous.x;
+    const dy = next.y - previous.y;
+    const length = Math.hypot(dx, dy);
+    const deviation = length === 0
+      ? Math.hypot(current.x - previous.x, current.y - previous.y)
+      : Math.abs(dy * current.x - dx * current.y + next.x * previous.y - next.y * previous.x)
+        / length;
+    if (deviation > 16) simplified.push(current);
   }
-  return segments;
-}
-
-function routeSegmentPenalty(
-  from: Point,
-  to: Point,
-  primarySegments: RouteSegment[],
-): number {
-  return primarySegments.reduce((penalty, segment) => {
-    const primaryHorizontal = segment.from.y === segment.to.y;
-    const routeHorizontal = from.y === to.y;
-    let intersects = false;
-    if (primaryHorizontal && routeHorizontal) {
-      intersects = from.y === segment.from.y
-        && Math.max(Math.min(from.x, to.x), Math.min(segment.from.x, segment.to.x))
-          <= Math.min(Math.max(from.x, to.x), Math.max(segment.from.x, segment.to.x));
-    } else if (!primaryHorizontal && !routeHorizontal) {
-      intersects = from.x === segment.from.x
-        && Math.max(Math.min(from.y, to.y), Math.min(segment.from.y, segment.to.y))
-          <= Math.min(Math.max(from.y, to.y), Math.max(segment.from.y, segment.to.y));
-    } else {
-      const horizontal = routeHorizontal ? { from, to } : segment;
-      const vertical = routeHorizontal ? segment : { from, to };
-      const horizontalY = horizontal.from.y;
-      const verticalX = vertical.from.x;
-      intersects = verticalX >= Math.min(horizontal.from.x, horizontal.to.x)
-        && verticalX <= Math.max(horizontal.from.x, horizontal.to.x)
-        && horizontalY >= Math.min(vertical.from.y, vertical.to.y)
-        && horizontalY <= Math.max(vertical.from.y, vertical.to.y);
-    }
-    return penalty + (intersects ? CONNECTOR_LANE_PENALTY : 0);
-  }, 0);
-}
-
-function findRouteToTree(
-  startNode: number,
-  treeNodes: Set<number>,
-  xCoordinates: number[],
-  yCoordinates: number[],
-  rectangles: RouteRectangle[],
-  primarySegments: RouteSegment[],
-  neighborCache: Map<number, RouteNeighbor[]>,
-): number[] | null {
-  const width = xCoordinates.length;
-  const nodePoint = (node: number): Point => ({
-    x: xCoordinates[node % width],
-    y: yCoordinates[Math.floor(node / width)],
-  });
-  const targetPoint = nodePoint(startNode);
-  const distances = new Map<number, number>();
-  const previous = new Map<number, number>();
-  const queue: RouteQueueEntry[] = [];
-
-  for (const treeNode of treeNodes) {
-    const point = nodePoint(treeNode);
-    const cost = Math.abs(point.x - targetPoint.x) + Math.abs(point.y - targetPoint.y);
-    distances.set(treeNode, 0);
-    pushRouteQueue(queue, { node: treeNode, cost: 0, priority: cost });
-  }
-
-  while (queue.length > 0) {
-    const current = popRouteQueue(queue);
-    if (!current || current.cost !== distances.get(current.node)) continue;
-    if (current.node === startNode) {
-      const path = [startNode];
-      let node = startNode;
-      while (previous.has(node)) {
-        node = previous.get(node)!;
-        path.push(node);
-      }
-      return path;
-    }
-
-    let neighbors = neighborCache.get(current.node);
-    if (!neighbors) {
-      const xIndex = current.node % width;
-      const yIndex = Math.floor(current.node / width);
-      const point = nodePoint(current.node);
-      const candidates = [
-        xIndex > 0 ? current.node - 1 : -1,
-        xIndex + 1 < xCoordinates.length ? current.node + 1 : -1,
-        yIndex > 0 ? current.node - width : -1,
-        yIndex + 1 < yCoordinates.length ? current.node + width : -1,
-      ];
-      neighbors = candidates.flatMap((neighbor): RouteNeighbor[] => {
-        if (neighbor < 0) return [];
-        const neighborPoint = nodePoint(neighbor);
-        if (isInsideRouteRectangle(neighborPoint, rectangles)
-          || !isRouteSegmentClear(point, neighborPoint, rectangles)) return [];
-        return [{
-          node: neighbor,
-          cost: Math.abs(neighborPoint.x - point.x)
-            + Math.abs(neighborPoint.y - point.y),
-        }];
-      });
-      neighborCache.set(current.node, neighbors);
-    }
-
-    for (const { node: neighbor, cost } of neighbors) {
-      const neighborPoint = nodePoint(neighbor);
-      const nextCost = current.cost + cost
-        + routeSegmentPenalty(nodePoint(current.node), neighborPoint, primarySegments);
-      if (nextCost >= (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) continue;
-      distances.set(neighbor, nextCost);
-      previous.set(neighbor, current.node);
-      const heuristic = Math.abs(neighborPoint.x - targetPoint.x)
-        + Math.abs(neighborPoint.y - targetPoint.y);
-      pushRouteQueue(queue, {
-        node: neighbor,
-        cost: nextCost,
-        priority: nextCost + heuristic,
-      });
-    }
-  }
-  return null;
+  simplified.push(points[points.length - 1]);
+  return simplified;
 }
 
 function buildMatrixConnectorPaths(
   connectors: MatrixConnector[],
   people: PositionedPerson[],
-  primaryConnectors: ChartConnector[],
 ): MatrixConnectorPath[] {
   if (connectors.length === 0) return [];
   const ports = getMatrixConnectorPorts(connectors);
-  const primarySegments = getPrimaryConnectorSegments(primaryConnectors);
   const results: MatrixConnectorPath[] = [];
 
   const rectangles: RouteRectangle[] = people.map((person) => ({
@@ -536,167 +328,19 @@ function buildMatrixConnectorPaths(
     top: person.y - CONNECTOR_CLEARANCE,
     bottom: person.y + CARD_HEIGHT + CONNECTOR_CLEARANCE,
   }));
-  const autoConnectors: MatrixConnector[] = [];
   for (const connector of connectors) {
     const port = ports.get(matrixConnectorKey(connector.supervisor.id, connector.report.id));
-    if (!port) continue;
-    const key = matrixConnectorKey(connector.supervisor.id, connector.report.id);
-    if (connector.connector_mode === 'manual' && connector.manual_waypoints?.length) {
-      const { path, routedPoints } = manualConnectorPath(port, connector.manual_waypoints);
-      const isClear = routedPoints.every((point, index) =>
-        index === 0 || isRouteSegmentClear(routedPoints[index - 1], point, rectangles),
-      );
-      if (isClear) {
-        results.push({ key, path });
-        continue;
-      }
-    }
-    autoConnectors.push(connector);
-  }
-  if (autoConnectors.length === 0) return results;
-
-  const xSet = new Set<number>();
-  const ySet = new Set<number>();
-  const addPoint = (point: Point) => {
-    xSet.add(point.x);
-    ySet.add(point.y);
-  };
-  for (const rectangle of rectangles) {
-    xSet.add(rectangle.left);
-    xSet.add(rectangle.right);
-    ySet.add(rectangle.top);
-    ySet.add(rectangle.bottom);
-  }
-
-  const supervisors = new Map<string, MatrixConnector[]>();
-  for (const connector of autoConnectors) {
-    const group = supervisors.get(connector.supervisor.id) ?? [];
-    group.push(connector);
-    supervisors.set(connector.supervisor.id, group);
-    const port = ports.get(matrixConnectorKey(connector.supervisor.id, connector.report.id));
-    if (!port) continue;
-    addPoint(port.supervisorPoint);
-    addPoint(offsetFromCard(port.supervisorPoint, port.supervisorSide));
-    addPoint(offsetFromCard(port.reportPoint, port.reportSide));
-    addPoint(port.reportPoint);
-  }
-  for (const segment of primarySegments) {
-    for (const point of [segment.from, segment.to]) {
-      xSet.add(point.x - 4);
-      xSet.add(point.x + 4);
-      ySet.add(point.y - 4);
-      ySet.add(point.y + 4);
-    }
-  }
-
-  const minX = Math.min(...xSet);
-  const maxX = Math.max(...xSet);
-  const minY = Math.min(...ySet);
-  const maxY = Math.max(...ySet);
-  xSet.add(Math.max(0, minX - CONNECTOR_STUB_LENGTH * 2));
-  xSet.add(maxX + CONNECTOR_STUB_LENGTH * 2);
-  ySet.add(Math.max(0, minY - CONNECTOR_STUB_LENGTH * 2));
-  ySet.add(maxY + CONNECTOR_STUB_LENGTH * 2);
-  const xCoordinates = [...xSet].sort((a, b) => a - b);
-  const yCoordinates = [...ySet].sort((a, b) => a - b);
-  const xIndexByValue = new Map(xCoordinates.map((value, index) => [value, index]));
-  const yIndexByValue = new Map(yCoordinates.map((value, index) => [value, index]));
-  const toNode = (point: Point) =>
-    yIndexByValue.get(point.y)! * xCoordinates.length + xIndexByValue.get(point.x)!;
-  const pointFor = (node: number): Point => ({
-    x: xCoordinates[node % xCoordinates.length],
-    y: yCoordinates[Math.floor(node / xCoordinates.length)],
-  });
-  const neighborCache = new Map<number, RouteNeighbor[]>();
-
-  for (const [supervisorId, group] of supervisors) {
-    const { supervisorSide, supervisorPoint } = ports.get(
-      matrixConnectorKey(group[0].supervisor.id, group[0].report.id),
-    )!;
-    const sourceStub = offsetFromCard(supervisorPoint, supervisorSide);
-    const edges = new Map<number, Set<number>>();
-    const addEdge = (from: number, to: number) => {
-      const fromEdges = edges.get(from) ?? new Set<number>();
-      const toEdges = edges.get(to) ?? new Set<number>();
-      fromEdges.add(to);
-      toEdges.add(from);
-      edges.set(from, fromEdges);
-      edges.set(to, toEdges);
-    };
-
-    const sourceAnchorNode = toNode(supervisorPoint);
-    const sourceStubNode = toNode(sourceStub);
-    addEdge(sourceAnchorNode, sourceStubNode);
-    const treeNodes = new Set([sourceStubNode]);
-    const sortedGroup = [...group].sort((a, b) =>
-      a.report.x - b.report.x || a.report.y - b.report.y,
+    if (!port || !connector.manual_waypoints?.length) continue;
+    const { path, routedPoints } = manualConnectorPath(port, connector.manual_waypoints);
+    const isClear = routedPoints.every((point, index) =>
+      index === 0 || isRouteSegmentClear(routedPoints[index - 1], point, rectangles),
     );
-    for (const connector of sortedGroup) {
-      const port = ports.get(matrixConnectorKey(connector.supervisor.id, connector.report.id));
-      if (!port) continue;
-      const targetStub = offsetFromCard(port.reportPoint, port.reportSide);
-      const targetStubNode = toNode(targetStub);
-      const path = findRouteToTree(
-        targetStubNode,
-        treeNodes,
-        xCoordinates,
-        yCoordinates,
-        rectangles,
-        primarySegments,
-        neighborCache,
-      );
-      if (!path) continue;
-      for (let index = 0; index < path.length - 1; index += 1) {
-        addEdge(path[index], path[index + 1]);
-        treeNodes.add(path[index]);
-      }
-      treeNodes.add(targetStubNode);
-      addEdge(targetStubNode, toNode(port.reportPoint));
+    if (isClear) {
+      results.push({
+        key: matrixConnectorKey(connector.supervisor.id, connector.report.id),
+        path,
+      });
     }
-
-    const visited = new Set<string>();
-    const canonicalEdge = (left: number, right: number) =>
-      left < right ? `${left}:${right}` : `${right}:${left}`;
-    const pathParts: string[] = [];
-    const trace = (start: number, next: number) => {
-      const points = [start];
-      let previous = start;
-      let current = next;
-      visited.add(canonicalEdge(previous, current));
-      points.push(current);
-      while ((edges.get(current)?.size ?? 0) === 2) {
-        const following = [...(edges.get(current) ?? [])].find((node) => node !== previous);
-        if (following === undefined) break;
-        const edge = canonicalEdge(current, following);
-        if (visited.has(edge)) break;
-        visited.add(edge);
-        previous = current;
-        current = following;
-        points.push(current);
-      }
-      const firstPoint = pointFor(points[0]);
-      const commands = [`M ${firstPoint.x} ${firstPoint.y}`];
-      for (let index = 1; index < points.length; index += 1) {
-        const point = pointFor(points[index]);
-        commands.push(point.x === pointFor(points[index - 1]).x
-          ? `V ${point.y}`
-          : `H ${point.x}`);
-      }
-      pathParts.push(commands.join(' '));
-    };
-
-    for (const [node, neighbors] of edges) {
-      if (neighbors.size === 2) continue;
-      for (const neighbor of neighbors) {
-        if (!visited.has(canonicalEdge(node, neighbor))) trace(node, neighbor);
-      }
-    }
-    for (const [node, neighbors] of edges) {
-      for (const neighbor of neighbors) {
-        if (!visited.has(canonicalEdge(node, neighbor))) trace(node, neighbor);
-      }
-    }
-    results.push({ key: supervisorId, path: pathParts.join(' ') });
   }
 
   return results;
@@ -767,7 +411,6 @@ function PersonnelDetailsModal({
     additionalSupervisorIds: string[],
     defaultLayout: ChildrenLayout,
     reportGroups: ReportGroup[],
-    connectorMode: ConnectorMode,
   ) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -775,9 +418,6 @@ function PersonnelDetailsModal({
   const [managerId, setManagerId] = useState(person.manager_id);
   const [additionalSupervisorIds, setAdditionalSupervisorIds] = useState<string[]>(
     person.additional_supervisor_ids.filter((id) => id !== person.manager_id),
-  );
-  const [connectorMode, setConnectorMode] = useState<ConnectorMode>(
-    person.matrix_connector_mode,
   );
   const [defaultLayout, setDefaultLayout] = useState<ChildrenLayout>(person.children_layout);
   const [reportGroups, setReportGroups] = useState<ReportGroup[]>(() =>
@@ -828,7 +468,6 @@ function PersonnelDetailsModal({
         additionalSupervisorIds.filter((id) => id !== managerId),
         defaultLayout,
         reportGroups,
-        connectorMode,
       );
       setIsEditing(false);
     } catch (error) {
@@ -844,7 +483,6 @@ function PersonnelDetailsModal({
     setAdditionalSupervisorIds(
       person.additional_supervisor_ids.filter((id) => id !== person.manager_id),
     );
-    setConnectorMode(person.matrix_connector_mode);
     setDefaultLayout(person.children_layout);
     setReportGroups(normalizeReportGroups(
       person.report_groups,
@@ -965,7 +603,7 @@ function PersonnelDetailsModal({
                 Additional supervisors
               </legend>
               <p className="mb-2 text-xs text-gray-500">
-                Dashed connectors show matrix-reporting relationships. The primary supervisor controls chart placement.
+                These supervisors are shown in the personnel details only. Draw dashed connectors separately with the chart pencil tool.
               </p>
               <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2">
                 {people
@@ -993,24 +631,6 @@ function PersonnelDetailsModal({
                   ))}
               </div>
             </fieldset>
-            <div>
-              <label htmlFor="org-chart-connector-mode" className="mb-1 block text-sm font-medium text-gray-700">
-                Additional connector routing
-              </label>
-              <select
-                id="org-chart-connector-mode"
-                value={connectorMode}
-                onChange={(event) => setConnectorMode(event.target.value as ConnectorMode)}
-                disabled={additionalSupervisorIds.length === 0}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
-              >
-                <option value="automatic">Automatic (avoid personnel and reporting lines)</option>
-                <option value="manual">Manual (draw routes on the chart)</option>
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                This applies to every additional supervisor selected above. Manual routes can be drawn after saving.
-              </p>
-            </div>
             <div>
               <label htmlFor="org-chart-label" className="mb-1 block text-sm font-medium text-gray-700">
                 Chart title / section badge
@@ -1161,6 +781,32 @@ function PersonnelDetailsModal({
                 </dd>
               </div>
             </div>
+            {person.additional_supervisor_ids.length > 0 && (
+              <div className="flex items-start gap-3">
+                <Network size={16} className="mt-0.5 flex-shrink-0 text-gray-400" />
+                <div className="min-w-0">
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                    Additional Supervisors
+                  </dt>
+                  <dd className="mt-1 space-y-1 text-sm text-gray-800">
+                    {person.additional_supervisor_ids.map((supervisorId) => {
+                      const supervisor = people.find((member) => member.id === supervisorId);
+                      return (
+                        <div key={supervisorId}>
+                          {toProfileTitleCase(supervisor?.full_name) || 'Staff Member'}
+                          {supervisor?.position
+                            ? ` — ${toProfilePosition(supervisor.position)}`
+                            : ''}
+                        </div>
+                      );
+                    })}
+                  </dd>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Dashed chart lines are drawn separately by a Super Admin.
+                  </p>
+                </div>
+              </div>
+            )}
             {person.is_focal_person && (
               <div className="flex items-start gap-3">
                 <Users size={16} className="mt-0.5 flex-shrink-0 text-gray-400" />
@@ -1196,6 +842,10 @@ export default function OrganizationChart() {
   const [viewportWidth, setViewportWidth] = useState(900);
   const [manualRouteKey, setManualRouteKey] = useState('');
   const [draftWaypoints, setDraftWaypoints] = useState<Point[]>([]);
+  const [routeDirty, setRouteDirty] = useState(false);
+  const [drawMode, setDrawMode] = useState(false);
+  const [isDrawingRoute, setIsDrawingRoute] = useState(false);
+  const strokePointsRef = useRef<Point[]>([]);
   const [routeSaving, setRouteSaving] = useState(false);
   const [routeError, setRouteError] = useState('');
   const chartViewportRef = useRef<HTMLDivElement>(null);
@@ -1212,7 +862,7 @@ export default function OrganizationChart() {
         .select('profile_id,manager_id,chart_label,children_layout,report_groups'),
       supabase
         .from('org_chart_supervisors')
-        .select('profile_id,supervisor_id,connector_mode,manual_waypoints'),
+        .select('profile_id,supervisor_id,manual_waypoints'),
     ]);
 
     if (peopleResult.error || placementResult.error || supervisorResult.error) {
@@ -1221,7 +871,7 @@ export default function OrganizationChart() {
         ?? supervisorResult.error?.message
         ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|is_focal_person|programs|org_chart_positions|org_chart_supervisors|connector_mode|manual_waypoints|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
+        /contact_phone|is_focal_person|programs|org_chart_positions|org_chart_supervisors|manual_waypoints|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
           ? 'The organization chart database migrations are not installed. Run the migrations in supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, supabase/org_chart_layout_preferences_migration.sql, supabase/org_chart_mixed_report_groups_migration.sql, supabase/org_chart_multiple_supervisors_migration.sql, and supabase/org_chart_manual_supervisor_routes_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
@@ -1406,10 +1056,6 @@ export default function OrganizationChart() {
         manager_id: node.manager_id,
         additional_supervisor_ids: (supervisorsByPerson.get(node.person.id) ?? [])
           .map(({ supervisor_id }) => supervisor_id),
-        matrix_connector_mode: (supervisorsByPerson.get(node.person.id) ?? [])
-          .some(({ connector_mode }) => connector_mode === 'manual')
-          ? 'manual'
-          : 'automatic',
         chart_label: node.chart_label,
         children_layout: node.children_layout,
         report_groups: node.report_groups,
@@ -1476,7 +1122,6 @@ export default function OrganizationChart() {
         matrixConnectors.push({
           supervisor,
           report,
-          connector_mode: settings?.connector_mode ?? 'automatic',
           manual_waypoints: settings?.manual_waypoints ?? [],
         });
       }
@@ -1486,12 +1131,8 @@ export default function OrganizationChart() {
   }, [people, placements, secondarySupervisors]);
 
   const matrixConnectorPaths = useMemo(
-    () => buildMatrixConnectorPaths(
-      layout.matrixConnectors,
-      layout.positionedPeople,
-      layout.connectors,
-    ),
-    [layout.matrixConnectors, layout.positionedPeople, layout.connectors],
+    () => buildMatrixConnectorPaths(layout.matrixConnectors, layout.positionedPeople),
+    [layout.matrixConnectors, layout.positionedPeople],
   );
 
   const saveChartSettings = async (
@@ -1501,7 +1142,6 @@ export default function OrganizationChart() {
     additionalSupervisorIds: string[],
     childrenLayout: ChildrenLayout,
     reportGroups: ReportGroup[],
-    connectorMode: ConnectorMode,
   ) => {
     const availableManagerIds = new Set(layout.positionedPeople.map((member) => member.id));
     const supervisorIds = [...new Set(additionalSupervisorIds)]
@@ -1556,7 +1196,7 @@ export default function OrganizationChart() {
       p_children_layout: childrenLayout,
       p_report_groups: normalizedGroups,
       p_additional_supervisor_ids: supervisorIds,
-      p_connector_mode: connectorMode,
+      p_connector_mode: 'manual',
     });
     if (saveError) throw new Error(saveError.message);
 
@@ -1566,7 +1206,6 @@ export default function OrganizationChart() {
           ...current,
           manager_id: managerId,
           additional_supervisor_ids: supervisorIds,
-          matrix_connector_mode: connectorMode,
           chart_label: chartLabel || null,
           children_layout: childrenLayout,
           report_groups: normalizedGroups,
@@ -1574,10 +1213,8 @@ export default function OrganizationChart() {
       : current);
   };
 
-  const manualConnectors = layout.matrixConnectors.filter(
-    (connector) => connector.connector_mode === 'manual',
-  );
-  const connectorCanvasPadding = manualConnectors.length > 0
+  const manualConnectors = layout.matrixConnectors;
+  const connectorCanvasPadding = manualRouteKey
     ? 240
     : matrixConnectorPaths.length > 0
       ? CONNECTOR_STUB_LENGTH * 2
@@ -1618,19 +1255,73 @@ export default function OrganizationChart() {
     ),
   ) ?? false;
 
-  const addManualWaypoint = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!activeManualConnector || !activeManualPort) return;
+  const getGridPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const waypoint = {
-      x: Math.max(0, Math.round((event.clientX - bounds.left) / 8) * 8),
-      y: Math.max(0, Math.round((event.clientY - bounds.top) / 8) * 8),
+    const scroll = chartViewportRef.current;
+    return {
+      x: Math.max(0, Math.round((event.clientX - bounds.left + (scroll?.scrollLeft ?? 0)) / 8) * 8),
+      y: Math.max(0, Math.round((event.clientY - bounds.top + (scroll?.scrollTop ?? 0)) / 8) * 8),
     };
-    setDraftWaypoints((current) => [...current, waypoint]);
+  };
+
+  const updateStroke = (points: Point[]) => {
+    strokePointsRef.current = points;
+    const simplified = simplifyStrokePoints(points);
+    let waypoints = simplified.slice(1, -1);
+    if (waypoints.length === 0 && simplified.length === 2) {
+      waypoints = [{
+        x: Math.round(((simplified[0].x + simplified[1].x) / 2) / 8) * 8,
+        y: Math.round(((simplified[0].y + simplified[1].y) / 2) / 8) * 8,
+      }];
+    }
+    setDraftWaypoints(waypoints.filter((waypoint) =>
+      !routeRectangles.some((rectangle) =>
+        waypoint.x > rectangle.left && waypoint.x < rectangle.right
+        && waypoint.y > rectangle.top && waypoint.y < rectangle.bottom,
+      ),
+    ));
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !drawMode || !activeManualConnector || !activeManualPort) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsDrawingRoute(true);
+    setRouteDirty(true);
+    updateStroke([getGridPoint(event)]);
     setRouteError('');
   };
 
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isDrawingRoute) return;
+    const point = getGridPoint(event);
+    const previous = strokePointsRef.current[strokePointsRef.current.length - 1];
+    if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 8) return;
+    updateStroke([...strokePointsRef.current, point]);
+  };
+
+  const finishStroke = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isDrawingRoute) return;
+    const point = getGridPoint(event);
+    const points = strokePointsRef.current;
+    const last = points[points.length - 1];
+    const completed = last && last.x === point.x && last.y === point.y
+      ? points
+      : [...points, point];
+    if (completed.length < 2) {
+      strokePointsRef.current = [];
+      setDraftWaypoints(activeManualConnector?.manual_waypoints ?? []);
+      setRouteDirty(false);
+      setIsDrawingRoute(false);
+      return;
+    }
+    updateStroke(completed);
+    setIsDrawingRoute(false);
+  };
+
   const saveManualRoute = async () => {
-    if (!activeManualConnector || !draftWaypoints.length || !activeRouteIsClear) return;
+    if (!activeManualConnector || !routeDirty || draftWaypoints.length > 100
+      || (draftWaypoints.length > 0 && !activeRouteIsClear)) return;
     setRouteSaving(true);
     setRouteError('');
     try {
@@ -1643,6 +1334,9 @@ export default function OrganizationChart() {
       await fetchData();
       setManualRouteKey('');
       setDraftWaypoints([]);
+      setRouteDirty(false);
+      strokePointsRef.current = [];
+      setDrawMode(false);
     } catch (saveError) {
       setRouteError(saveError instanceof Error ? saveError.message : 'Could not save this route.');
     } finally {
@@ -1653,13 +1347,37 @@ export default function OrganizationChart() {
   return (
     <>
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
-        <div className="mb-5">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
           <h2 className="flex items-center gap-2 text-xl font-bold text-gray-800">
             <Network size={21} className="text-blue-700" /> Organizational Chart
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Automatically arranged from the head and reporting relationships set in Personnel Management.
+            Solid lines show primary reporting. Additional supervisors are listed in personnel details; dashed lines are drawn manually by a Super Admin.
           </p>
+          </div>
+          {isSuperAdmin && manualConnectors.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setDrawMode((current) => !current);
+                setIsDrawingRoute(false);
+                strokePointsRef.current = [];
+                setRouteError('');
+              }}
+              disabled={!manualRouteKey || routeSaving}
+              aria-label={drawMode ? 'Stop drawing dashed connector' : 'Draw dashed connector'}
+              aria-pressed={drawMode}
+              title={drawMode ? 'Stop drawing' : 'Draw a dashed connector'}
+              className={`shrink-0 rounded-lg border p-2 ${
+                drawMode
+                  ? 'border-violet-700 bg-violet-700 text-white'
+                  : 'border-violet-200 bg-white text-violet-800 hover:bg-violet-50'
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              <Pencil size={18} />
+            </button>
+          )}
         </div>
 
         {error && (
@@ -1670,10 +1388,10 @@ export default function OrganizationChart() {
 
         {isSuperAdmin && manualConnectors.length > 0 && (
           <div className="mb-4 space-y-2 rounded-lg border border-violet-200 bg-violet-50 p-3">
-            <label htmlFor="org-chart-manual-route" className="block text-sm font-semibold text-gray-800">
-              Manually draw a dashed connector
-            </label>
             <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="org-chart-manual-route" className="text-sm font-semibold text-gray-800">
+                Additional supervisor line
+              </label>
               <select
                 id="org-chart-manual-route"
                 value={manualRouteKey}
@@ -1684,6 +1402,10 @@ export default function OrganizationChart() {
                   );
                   setManualRouteKey(key);
                   setDraftWaypoints(connector?.manual_waypoints ?? []);
+                  setRouteDirty(false);
+                  setIsDrawingRoute(false);
+                  setDrawMode(false);
+                  strokePointsRef.current = [];
                   setRouteError('');
                 }}
                 className="min-w-[220px] flex-1 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm"
@@ -1703,32 +1425,27 @@ export default function OrganizationChart() {
               <button
                 type="button"
                 onClick={() => {
-                  setDraftWaypoints((points) => points.slice(0, -1));
-                  setRouteError('');
-                }}
-                disabled={!manualRouteKey || draftWaypoints.length === 0 || routeSaving}
-                className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-800 disabled:opacity-50"
-              >
-                Undo point
-              </button>
-              <button
-                type="button"
-                onClick={() => {
                   setDraftWaypoints([]);
+                  strokePointsRef.current = [];
+                  setRouteDirty(true);
+                  setDrawMode(false);
+                  setIsDrawingRoute(false);
                   setRouteError('');
                 }}
-                disabled={!manualRouteKey || draftWaypoints.length === 0 || routeSaving}
+                disabled={!manualRouteKey || routeSaving
+                  || (!draftWaypoints.length && !activeManualConnector?.manual_waypoints?.length)}
                 className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-800 disabled:opacity-50"
               >
-                Clear
+                Clear line
               </button>
               <button
                 type="button"
                 onClick={() => void saveManualRoute()}
-                disabled={!activeManualConnector || !draftWaypoints.length || !activeRouteIsClear || routeSaving}
+                disabled={!activeManualConnector || !routeDirty || draftWaypoints.length > 100
+                  || (draftWaypoints.length > 0 && !activeRouteIsClear) || routeSaving}
                 className="flex items-center gap-1 rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50"
               >
-                <Check size={15} /> {routeSaving ? 'Saving…' : 'Save route'}
+                <Check size={15} /> {routeSaving ? 'Saving…' : 'Save line'}
               </button>
               {manualRouteKey && (
                 <button
@@ -1736,6 +1453,10 @@ export default function OrganizationChart() {
                   onClick={() => {
                     setManualRouteKey('');
                     setDraftWaypoints([]);
+                    setRouteDirty(false);
+                    setDrawMode(false);
+                    setIsDrawingRoute(false);
+                    strokePointsRef.current = [];
                     setRouteError('');
                   }}
                   disabled={routeSaving}
@@ -1747,11 +1468,17 @@ export default function OrganizationChart() {
             </div>
             {manualRouteKey && (
               <p className="text-xs text-gray-600">
-                Click open grid points to add corners; each segment stays horizontal or vertical.
-                Avoid personnel cards and solid reporting lines.
-                {!activeRouteIsClear && (
+                {drawMode
+                  ? 'Drag the pencil from the supervisor toward the personnel card. The stroke snaps to the grid and stays horizontal/vertical.'
+                  : 'Choose a relationship, then use the pencil button at the top-right to sketch its dashed connector.'}
+                {drawMode && !activeRouteIsClear && (
                   <span className="ml-1 font-semibold text-red-700">
-                    The current route crosses a personnel card; adjust its points to save.
+                    This line crosses a personnel card; redraw it to save.
+                  </span>
+                )}
+                {draftWaypoints.length > 100 && (
+                  <span className="ml-1 font-semibold text-red-700">
+                    The line has too many bends; redraw it with a simpler stroke.
                   </span>
                 )}
               </p>
@@ -1779,14 +1506,18 @@ export default function OrganizationChart() {
             style={{ resize: 'both', height: '480px' }}
           >
             <div
-              className={`relative ${manualRouteKey ? 'cursor-crosshair' : ''}`}
-              onClick={addManualWaypoint}
+              className={`relative ${drawMode ? 'cursor-crosshair' : ''}`}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishStroke}
+              onPointerCancel={finishStroke}
               style={{
                 width: `${canvasWidth}px`,
                 height: `${canvasHeight}px`,
                 backgroundImage:
                   'linear-gradient(to right, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to right, rgba(100, 116, 139, 0.22) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.22) 1px, transparent 1px)',
                 backgroundSize: '8px 8px, 8px 8px, 32px 32px, 32px 32px',
+                touchAction: drawMode ? 'none' : 'auto',
               }}
             >
               <svg
@@ -1835,7 +1566,9 @@ export default function OrganizationChart() {
                     />
                   );
                 })}
-                {matrixConnectorPaths.map(({ key, path }) => (
+                {matrixConnectorPaths
+                  .filter(({ key }) => key !== manualRouteKey || !routeDirty)
+                  .map(({ key, path }) => (
                   <path
                     key={key}
                     d={path}
@@ -1845,7 +1578,7 @@ export default function OrganizationChart() {
                     strokeDasharray="6 4"
                   />
                 ))}
-                {activeManualPreview && (
+                {drawMode && draftWaypoints.length > 0 && activeManualPreview && (
                   <path
                     d={activeManualPreview.path}
                     fill="none"
@@ -1859,16 +1592,14 @@ export default function OrganizationChart() {
                 <button
                   key={person.id}
                   type="button"
-                  onClick={(event) => {
-                    if (manualRouteKey) {
-                      event.stopPropagation();
-                      return;
-                    }
-                    setSelectedPerson(person);
-                  }}
+                  onClick={() => setSelectedPerson(person)}
                   aria-label={`${toProfileTitleCase(person.full_name) || 'Staff Member'}${person.position ? `, ${toProfilePosition(person.position)}` : ''}. View personnel details.`}
                   className="absolute z-10 flex h-[72px] w-[230px] items-center gap-3 overflow-hidden rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm transition-colors hover:border-blue-400 hover:shadow-md"
-                  style={{ left: person.x, top: person.y }}
+                  style={{
+                    left: person.x,
+                    top: person.y,
+                    pointerEvents: drawMode ? 'none' : 'auto',
+                  }}
                 >
                   <Avatar name={person.full_name} src={person.avatar_url} size={48} />
                   <span className="min-w-0">
@@ -1897,7 +1628,7 @@ export default function OrganizationChart() {
           people={layout.positionedPeople}
           onClose={() => setSelectedPerson(null)}
           isSuperAdmin={isSuperAdmin}
-          onSave={(chartLabel, managerId, additionalSupervisorIds, childrenLayout, reportGroups, connectorMode) =>
+          onSave={(chartLabel, managerId, additionalSupervisorIds, childrenLayout, reportGroups) =>
             saveChartSettings(
               selectedPerson,
               chartLabel,
@@ -1905,7 +1636,6 @@ export default function OrganizationChart() {
               additionalSupervisorIds,
               childrenLayout,
               reportGroups,
-              connectorMode,
             )
           }
         />
@@ -1913,7 +1643,7 @@ export default function OrganizationChart() {
       {layout.matrixConnectors.length > 0 && (
         <p className="mt-2 flex items-center gap-2 text-xs text-gray-500">
           <span aria-hidden="true" className="w-6 border-t-2 border-dashed border-violet-500" />
-          Dashed lines indicate additional supervisor relationships.
+          Dashed lines are manually drawn additional supervisor connectors.
         </p>
       )}
     </>
