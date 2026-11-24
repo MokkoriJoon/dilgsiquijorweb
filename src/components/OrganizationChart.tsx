@@ -81,7 +81,18 @@ interface ChartConnector {
 interface MatrixConnector {
   supervisor: PositionedPerson;
   report: PositionedPerson;
-  index: number;
+}
+
+type CardSide = 'top' | 'right' | 'bottom' | 'left';
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface MatrixConnectorPath {
+  key: string;
+  path: string;
 }
 
 const CARD_WIDTH = 230;
@@ -89,6 +100,116 @@ const CARD_HEIGHT = 72;
 const HORIZONTAL_GAP = 64;
 const VERTICAL_GAP = 104;
 const CHART_MARGIN = 32;
+const CONNECTOR_PORT_PADDING = 12;
+const CONNECTOR_STUB_LENGTH = 18;
+
+function nearestCardSide(card: PositionedPerson, other: PositionedPerson): CardSide {
+  const deltaX = other.x + CARD_WIDTH / 2 - (card.x + CARD_WIDTH / 2);
+  const deltaY = other.y + CARD_HEIGHT / 2 - (card.y + CARD_HEIGHT / 2);
+  if (Math.abs(deltaX) / CARD_WIDTH >= Math.abs(deltaY) / CARD_HEIGHT) {
+    return deltaX >= 0 ? 'right' : 'left';
+  }
+  return deltaY >= 0 ? 'bottom' : 'top';
+}
+
+function cardEdgePort(
+  card: PositionedPerson,
+  side: CardSide,
+  index: number,
+  count: number,
+): Point {
+  const fraction = (index + 1) / (count + 1);
+  if (side === 'left' || side === 'right') {
+    return {
+      x: card.x + (side === 'right' ? CARD_WIDTH : 0),
+      y: card.y + CONNECTOR_PORT_PADDING
+        + fraction * (CARD_HEIGHT - 2 * CONNECTOR_PORT_PADDING),
+    };
+  }
+  return {
+    x: card.x + CONNECTOR_PORT_PADDING
+      + fraction * (CARD_WIDTH - 2 * CONNECTOR_PORT_PADDING),
+    y: card.y + (side === 'bottom' ? CARD_HEIGHT : 0),
+  };
+}
+
+function offsetFromCard(point: Point, side: CardSide): Point {
+  if (side === 'left') return { ...point, x: point.x - CONNECTOR_STUB_LENGTH };
+  if (side === 'right') return { ...point, x: point.x + CONNECTOR_STUB_LENGTH };
+  if (side === 'top') return { ...point, y: point.y - CONNECTOR_STUB_LENGTH };
+  return { ...point, y: point.y + CONNECTOR_STUB_LENGTH };
+}
+
+function buildMatrixConnectorPaths(connectors: MatrixConnector[]): MatrixConnectorPath[] {
+  const details = connectors.map((connector) => ({
+    ...connector,
+    key: `${connector.supervisor.id}-${connector.report.id}`,
+    sourceSide: nearestCardSide(connector.supervisor, connector.report),
+    targetSide: nearestCardSide(connector.report, connector.supervisor),
+  }));
+  const sourceGroups = new Map<string, typeof details>();
+  const targetGroups = new Map<string, typeof details>();
+
+  for (const connector of details) {
+    const sourceKey = `${connector.supervisor.id}:${connector.sourceSide}`;
+    const sourceGroup = sourceGroups.get(sourceKey) ?? [];
+    sourceGroup.push(connector);
+    sourceGroups.set(sourceKey, sourceGroup);
+
+    const targetKey = `${connector.report.id}:${connector.targetSide}`;
+    const targetGroup = targetGroups.get(targetKey) ?? [];
+    targetGroup.push(connector);
+    targetGroups.set(targetKey, targetGroup);
+  }
+
+  const sourcePorts = new Map<string, { point: Point; side: CardSide }>();
+  for (const group of sourceGroups.values()) {
+    const side = group[0].sourceSide;
+    group.sort((a, b) => side === 'left' || side === 'right'
+      ? a.report.y - b.report.y
+      : a.report.x - b.report.x);
+    group.forEach((connector, index) => {
+      sourcePorts.set(connector.key, {
+        point: cardEdgePort(connector.supervisor, side, index, group.length),
+        side,
+      });
+    });
+  }
+
+  const targetPorts = new Map<string, { point: Point; side: CardSide }>();
+  for (const group of targetGroups.values()) {
+    const side = group[0].targetSide;
+    group.sort((a, b) => side === 'left' || side === 'right'
+      ? a.supervisor.y - b.supervisor.y
+      : a.supervisor.x - b.supervisor.x);
+    group.forEach((connector, index) => {
+      targetPorts.set(connector.key, {
+        point: cardEdgePort(connector.report, side, index, group.length),
+        side,
+      });
+    });
+  }
+
+  return details.map((connector) => {
+    const source = sourcePorts.get(connector.key);
+    const target = targetPorts.get(connector.key);
+    if (!source || !target) return { key: connector.key, path: '' };
+    const sourceStub = offsetFromCard(source.point, source.side);
+    const targetStub = offsetFromCard(target.point, target.side);
+    const midX = (sourceStub.x + targetStub.x) / 2;
+    const d = [
+      `M ${source.point.x} ${source.point.y}`,
+      source.side === 'left' || source.side === 'right'
+        ? `H ${sourceStub.x}`
+        : `V ${sourceStub.y}`,
+      `H ${midX} V ${targetStub.y} H ${targetStub.x}`,
+      target.side === 'left' || target.side === 'right'
+        ? `H ${target.point.x}`
+        : `V ${target.point.y}`,
+    ].join(' ');
+    return { key: connector.key, path: d };
+  });
+}
 
 function makeReportGroup(label: string, layout: ChildrenLayout, memberIds: string[] = []): ReportGroup {
   return {
@@ -818,18 +939,22 @@ export default function OrganizationChart() {
         : [];
     });
 
-    const positionedById = new Map(positionedPeople.map((person) => [person.id, person]));
     const matrixConnectors: MatrixConnector[] = [];
     for (const report of positionedPeople) {
       for (const supervisorId of report.additional_supervisor_ids) {
-        const supervisor = positionedById.get(supervisorId);
+        const supervisor = positionedMap.get(supervisorId);
         if (!supervisor || supervisor.id === report.manager_id) continue;
-        matrixConnectors.push({ supervisor, report, index: matrixConnectors.length });
+        matrixConnectors.push({ supervisor, report });
       }
     }
 
     return { positionedPeople, connectors, matrixConnectors };
   }, [people, placements, secondarySupervisors]);
+
+  const matrixConnectorPaths = useMemo(
+    () => buildMatrixConnectorPaths(layout.matrixConnectors),
+    [layout.matrixConnectors],
+  );
 
   const saveChartSettings = async (
     person: PositionedPerson,
@@ -1008,24 +1133,16 @@ export default function OrganizationChart() {
                     />
                   );
                 })}
-                {layout.matrixConnectors.map(({ supervisor, report, index }) => {
-                  const targetX = report.x - 16 - (index % 3) * 8;
-                  const targetCenterY = report.y + CARD_HEIGHT / 2;
-                  const supervisorCenterX = supervisor.x + CARD_WIDTH / 2;
-                  const path = supervisor.y <= report.y
-                    ? `M ${supervisorCenterX} ${supervisor.y + CARD_HEIGHT} V ${supervisor.y + CARD_HEIGHT + 20} H ${targetX} V ${targetCenterY} H ${report.x}`
-                    : `M ${supervisorCenterX} ${supervisor.y} V ${report.y - 20} H ${targetX} V ${targetCenterY} H ${report.x}`;
-                  return (
-                    <path
-                      key={`${supervisor.id}-${report.id}`}
-                      d={path}
-                      fill="none"
-                      stroke="#8b5cf6"
-                      strokeWidth="2"
-                      strokeDasharray="6 4"
-                    />
-                  );
-                })}
+                {matrixConnectorPaths.map(({ key, path }) => (
+                  <path
+                    key={key}
+                    d={path}
+                    fill="none"
+                    stroke="#8b5cf6"
+                    strokeWidth="2"
+                    strokeDasharray="6 4"
+                  />
+                ))}
               </svg>
               {layout.positionedPeople.map((person) => (
                 <button
