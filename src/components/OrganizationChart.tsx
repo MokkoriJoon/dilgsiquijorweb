@@ -666,6 +666,7 @@ export default function OrganizationChart() {
   const [error, setError] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<PositionedPerson | null>(null);
   const [viewportWidth, setViewportWidth] = useState(900);
+  const [zoomOverride, setZoomOverride] = useState<number | null>(null);
   const [freeConnectors, setFreeConnectors] = useState<FreeConnector[]>([]);
   const [selectedConnectorId, setSelectedConnectorId] = useState('');
   const [lineStyle, setLineStyle] = useState<ConnectorLineStyle>('solid');
@@ -1026,7 +1027,7 @@ export default function OrganizationChart() {
     800,
     viewportWidth,
     ...layout.positionedPeople.map(
-      (person) => person.x + CARD_WIDTH + CHART_MARGIN + (isSuperAdmin ? 500 : 0),
+      (person) => person.x + CARD_WIDTH + CHART_MARGIN + (isSuperAdmin ? 128 : 0),
     ),
     ...freeConnectors.flatMap((connector) =>
       freeConnectorPoints(connector).map((point) => point.x + CHART_MARGIN),
@@ -1035,18 +1036,20 @@ export default function OrganizationChart() {
   const canvasHeight = Math.max(
     480,
     ...layout.positionedPeople.map(
-      (person) => person.y + CARD_HEIGHT + CHART_MARGIN + (isSuperAdmin ? 500 : 0),
+      (person) => person.y + CARD_HEIGHT + CHART_MARGIN + (isSuperAdmin ? 128 : 0),
     ),
     ...freeConnectors.flatMap((connector) =>
       freeConnectorPoints(connector).map((point) => point.y + CHART_MARGIN),
     ),
   );
+  const fitScale = Math.min(1, viewportWidth / canvasWidth);
+  const chartScale = zoomOverride ?? fitScale;
 
   const getGridPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
     const bounds = event.currentTarget.getBoundingClientRect();
     return {
-      x: Math.max(0, Math.round((event.clientX - bounds.left) / 8) * 8),
-      y: Math.max(0, Math.round((event.clientY - bounds.top) / 8) * 8),
+      x: Math.max(0, Math.round((event.clientX - bounds.left) / chartScale / 8) * 8),
+      y: Math.max(0, Math.round((event.clientY - bounds.top) / chartScale / 8) * 8),
     };
   };
 
@@ -1236,6 +1239,37 @@ export default function OrganizationChart() {
           </div>
         )}
 
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setZoomOverride((current) =>
+              Math.max(0.25, Math.round(((current ?? fitScale) - 0.1) * 100) / 100))}
+            aria-label="Zoom out on organization chart"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            -
+          </button>
+          <span className="min-w-12 text-center text-xs tabular-nums text-gray-600">
+            {Math.round(chartScale * 100)}%
+          </span>
+          <button
+            type="button"
+            onClick={() => setZoomOverride((current) =>
+              Math.min(2, Math.round(((current ?? fitScale) + 0.1) * 100) / 100))}
+            aria-label="Zoom in on organization chart"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoomOverride(null)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Fit width
+          </button>
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-blue-700" />
@@ -1250,23 +1284,29 @@ export default function OrganizationChart() {
             id="organization-chart-viewport"
             title="Drag the bottom-right corner to resize the chart area"
             className="w-full min-w-[320px] max-w-full min-h-[240px] overflow-auto rounded-xl border border-gray-200 bg-slate-50"
-            style={{ resize: 'both', height: '480px' }}
+            style={{ resize: 'both', height: '70vh', maxHeight: '720px' }}
           >
             <div
-              className={`relative ${drawMode ? 'cursor-crosshair' : ''}`}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={finishStroke}
-              onPointerCancel={finishStroke}
-              style={{
-                width: `${canvasWidth}px`,
-                height: `${canvasHeight}px`,
-                backgroundImage:
-                  'linear-gradient(to right, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to right, rgba(100, 116, 139, 0.22) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.22) 1px, transparent 1px)',
-                backgroundSize: '8px 8px, 8px 8px, 32px 32px, 32px 32px',
-                touchAction: drawMode ? 'none' : 'auto',
-              }}
+              className="relative"
+              style={{ width: canvasWidth * chartScale, height: canvasHeight * chartScale }}
             >
+              <div
+                className={`relative ${drawMode ? 'cursor-crosshair' : ''}`}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={finishStroke}
+                onPointerCancel={finishStroke}
+                style={{
+                  width: `${canvasWidth}px`,
+                  height: `${canvasHeight}px`,
+                  transform: `scale(${chartScale})`,
+                  transformOrigin: 'top left',
+                  backgroundImage:
+                    'linear-gradient(to right, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to bottom, rgba(148, 163, 184, 0.10) 1px, transparent 1px), linear-gradient(to right, rgba(100, 116, 139, 0.22) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.22) 1px, transparent 1px)',
+                  backgroundSize: '8px 8px, 8px 8px, 32px 32px, 32px 32px',
+                  touchAction: drawMode ? 'none' : 'auto',
+                }}
+              >
               <svg
                 className="absolute inset-0"
                 width={canvasWidth}
@@ -1377,6 +1417,7 @@ export default function OrganizationChart() {
                   )}
                 </button>
               ))}
+              </div>
             </div>
           </div>
         )}
