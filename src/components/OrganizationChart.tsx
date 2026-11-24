@@ -40,8 +40,19 @@ interface OrgPlacement {
 interface SecondarySupervisor {
   profile_id: string;
   supervisor_id: string;
-  manual_waypoints: Point[] | null;
 }
+
+interface FreeConnector {
+  id: string;
+  source_x: number;
+  source_y: number;
+  target_x: number;
+  target_y: number;
+  waypoints: Point[] | null;
+  line_style: ConnectorLineStyle;
+}
+
+type ConnectorLineStyle = 'solid' | 'dashed';
 
 interface PositionedPerson extends OrgPerson {
   manager_id: string | null;
@@ -82,36 +93,9 @@ interface ChartConnector {
   }>;
 }
 
-interface MatrixConnector {
-  supervisor: PositionedPerson;
-  report: PositionedPerson;
-  manual_waypoints: Point[] | null;
-}
-
-type CardSide = 'top' | 'right' | 'bottom' | 'left';
-
 interface Point {
   x: number;
   y: number;
-}
-
-interface MatrixConnectorPath {
-  key: string;
-  path: string;
-}
-
-interface RouteRectangle {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
-
-interface MatrixConnectorPort {
-  supervisorSide: CardSide;
-  supervisorPoint: Point;
-  reportSide: CardSide;
-  reportPoint: Point;
 }
 
 const CARD_WIDTH = 230;
@@ -119,135 +103,6 @@ const CARD_HEIGHT = 72;
 const HORIZONTAL_GAP = 64;
 const VERTICAL_GAP = 104;
 const CHART_MARGIN = 32;
-const CONNECTOR_PORT_PADDING = 12;
-const CONNECTOR_STUB_LENGTH = 18;
-const CONNECTOR_CLEARANCE = 12;
-
-function nearestCardSideToPoint(card: PositionedPerson, other: Point): CardSide {
-  const deltaX = other.x - (card.x + CARD_WIDTH / 2);
-  const deltaY = other.y - (card.y + CARD_HEIGHT / 2);
-  if (Math.abs(deltaX) / CARD_WIDTH >= Math.abs(deltaY) / CARD_HEIGHT) {
-    return deltaX >= 0 ? 'right' : 'left';
-  }
-  return deltaY >= 0 ? 'bottom' : 'top';
-}
-
-function nearestCardSide(card: PositionedPerson, other: PositionedPerson): CardSide {
-  return nearestCardSideToPoint(card, {
-    x: other.x + CARD_WIDTH / 2,
-    y: other.y + CARD_HEIGHT / 2,
-  });
-}
-
-function cardEdgePort(
-  card: PositionedPerson,
-  side: CardSide,
-  index: number,
-  count: number,
-): Point {
-  const fraction = (index + 1) / (count + 1);
-  if (side === 'left' || side === 'right') {
-    return {
-      x: card.x + (side === 'right' ? CARD_WIDTH : 0),
-      y: card.y + CONNECTOR_PORT_PADDING
-        + fraction * (CARD_HEIGHT - 2 * CONNECTOR_PORT_PADDING),
-    };
-  }
-  return {
-    x: card.x + CONNECTOR_PORT_PADDING
-      + fraction * (CARD_WIDTH - 2 * CONNECTOR_PORT_PADDING),
-    y: card.y + (side === 'bottom' ? CARD_HEIGHT : 0),
-  };
-}
-
-function offsetFromCard(point: Point, side: CardSide): Point {
-  if (side === 'left') return { ...point, x: point.x - CONNECTOR_STUB_LENGTH };
-  if (side === 'right') return { ...point, x: point.x + CONNECTOR_STUB_LENGTH };
-  if (side === 'top') return { ...point, y: point.y - CONNECTOR_STUB_LENGTH };
-  return { ...point, y: point.y + CONNECTOR_STUB_LENGTH };
-}
-
-function matrixConnectorKey(supervisorId: string, reportId: string): string {
-  return `${supervisorId}-${reportId}`;
-}
-
-function getMatrixConnectorPorts(
-  connectors: MatrixConnector[],
-): Map<string, MatrixConnectorPort> {
-  const details = connectors.map((connector) => ({
-    ...connector,
-    key: matrixConnectorKey(connector.supervisor.id, connector.report.id),
-    targetSide: nearestCardSide(connector.report, connector.supervisor),
-  }));
-  const targetGroups = new Map<string, typeof details>();
-  const supervisorGroups = new Map<string, typeof details>();
-
-  for (const connector of details) {
-    const targetKey = `${connector.report.id}:${connector.targetSide}`;
-    const targetGroup = targetGroups.get(targetKey) ?? [];
-    targetGroup.push(connector);
-    targetGroups.set(targetKey, targetGroup);
-
-    const supervisorGroup = supervisorGroups.get(connector.supervisor.id) ?? [];
-    supervisorGroup.push(connector);
-    supervisorGroups.set(connector.supervisor.id, supervisorGroup);
-  }
-
-  const ports = new Map<string, MatrixConnectorPort>();
-  for (const group of targetGroups.values()) {
-    const side = group[0].targetSide;
-    group.sort((a, b) => side === 'left' || side === 'right'
-      ? a.supervisor.y - b.supervisor.y
-      : a.supervisor.x - b.supervisor.x);
-    group.forEach((connector, index) => {
-      ports.set(connector.key, {
-        supervisorSide: 'bottom',
-        supervisorPoint: { x: 0, y: 0 },
-        reportSide: side,
-        reportPoint: cardEdgePort(connector.report, side, index, group.length),
-      });
-    });
-  }
-
-  for (const group of supervisorGroups.values()) {
-    const center = group.reduce((sum, connector) => ({
-      x: sum.x + connector.report.x + CARD_WIDTH / 2,
-      y: sum.y + connector.report.y + CARD_HEIGHT / 2,
-    }), { x: 0, y: 0 });
-    const destination = {
-      x: center.x / group.length,
-      y: center.y / group.length,
-    };
-    const supervisor = group[0].supervisor;
-    const supervisorSide = destination.y > supervisor.y + CARD_HEIGHT
-      ? 'bottom'
-      : nearestCardSideToPoint(supervisor, destination);
-    const supervisorPoint = cardEdgePort(supervisor, supervisorSide, 0, 1);
-    for (const connector of group) {
-      const key = matrixConnectorKey(connector.supervisor.id, connector.report.id);
-      const port = ports.get(key);
-      if (port) {
-        port.supervisorSide = supervisorSide;
-        port.supervisorPoint = supervisorPoint;
-      }
-    }
-  }
-  return ports;
-}
-
-function orthogonalRoutePoints(start: Point, waypoints: Point[], end: Point): Point[] {
-  const points = [start];
-  let current = start;
-  for (const waypoint of [...waypoints, end]) {
-    if (current.x !== waypoint.x) points.push({ x: waypoint.x, y: current.y });
-    if (current.y !== waypoint.y || current.x !== waypoint.x) points.push(waypoint);
-    current = waypoint;
-  }
-  return points.filter((point, index) =>
-    index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y,
-  );
-}
-
 function routePathFromPoints(points: Point[]): string {
   if (points.length === 0) return '';
   const commands = [`M ${points[0].x} ${points[0].y}`];
@@ -258,40 +113,6 @@ function routePathFromPoints(points: Point[]): string {
       : `H ${point.x}`);
   }
   return commands.join(' ');
-}
-
-function manualConnectorPath(
-  port: MatrixConnectorPort,
-  waypoints: Point[],
-): { path: string; routedPoints: Point[] } {
-  const sourceStub = offsetFromCard(port.supervisorPoint, port.supervisorSide);
-  const targetStub = offsetFromCard(port.reportPoint, port.reportSide);
-  const routedPoints = orthogonalRoutePoints(sourceStub, waypoints, targetStub);
-  return {
-    path: routePathFromPoints([
-      port.supervisorPoint,
-      ...routedPoints,
-      port.reportPoint,
-    ]),
-    routedPoints,
-  };
-}
-
-function isRouteSegmentClear(
-  from: Point,
-  to: Point,
-  rectangles: RouteRectangle[],
-): boolean {
-  return rectangles.every((rectangle) => {
-    if (from.y === to.y) {
-      return !(from.y > rectangle.top && from.y < rectangle.bottom
-        && Math.max(from.x, to.x) > rectangle.left
-        && Math.min(from.x, to.x) < rectangle.right);
-    }
-    return !(from.x > rectangle.left && from.x < rectangle.right
-      && Math.max(from.y, to.y) > rectangle.top
-      && Math.min(from.y, to.y) < rectangle.bottom);
-  });
 }
 
 function simplifyStrokePoints(points: Point[]): Point[] {
@@ -314,36 +135,41 @@ function simplifyStrokePoints(points: Point[]): Point[] {
   return simplified;
 }
 
-function buildMatrixConnectorPaths(
-  connectors: MatrixConnector[],
-  people: PositionedPerson[],
-): MatrixConnectorPath[] {
-  if (connectors.length === 0) return [];
-  const ports = getMatrixConnectorPorts(connectors);
-  const results: MatrixConnectorPath[] = [];
-
-  const rectangles: RouteRectangle[] = people.map((person) => ({
-    left: person.x - CONNECTOR_CLEARANCE,
-    right: person.x + CARD_WIDTH + CONNECTOR_CLEARANCE,
-    top: person.y - CONNECTOR_CLEARANCE,
-    bottom: person.y + CARD_HEIGHT + CONNECTOR_CLEARANCE,
-  }));
-  for (const connector of connectors) {
-    const port = ports.get(matrixConnectorKey(connector.supervisor.id, connector.report.id));
-    if (!port || !connector.manual_waypoints?.length) continue;
-    const { path, routedPoints } = manualConnectorPath(port, connector.manual_waypoints);
-    const isClear = routedPoints.every((point, index) =>
-      index === 0 || isRouteSegmentClear(routedPoints[index - 1], point, rectangles),
-    );
-    if (isClear) {
-      results.push({
-        key: matrixConnectorKey(connector.supervisor.id, connector.report.id),
-        path,
-      });
+function orthogonalizeStrokePoints(points: Point[]): Point[] {
+  const simplified = simplifyStrokePoints(points);
+  if (simplified.length < 2) return simplified;
+  const result = [simplified[0]];
+  for (const target of simplified.slice(1)) {
+    const previous = result[result.length - 1];
+    const deltaX = target.x - previous.x;
+    const deltaY = target.y - previous.y;
+    if (deltaX !== 0 && deltaY !== 0) {
+      result.push(Math.abs(deltaX) >= Math.abs(deltaY)
+        ? { x: target.x, y: previous.y }
+        : { x: previous.x, y: target.y });
+    }
+    if (target.x !== result[result.length - 1].x
+      || target.y !== result[result.length - 1].y) {
+      result.push(target);
     }
   }
+  return result.filter((point, index) => {
+    if (index === 0 || index === result.length - 1) return true;
+    const before = result[index - 1];
+    const after = result[index + 1];
+    return !(
+      (before.x === point.x && point.x === after.x)
+      || (before.y === point.y && point.y === after.y)
+    );
+  });
+}
 
-  return results;
+function freeConnectorPoints(connector: FreeConnector): Point[] {
+  return [
+    { x: connector.source_x, y: connector.source_y },
+    ...(connector.waypoints ?? []),
+    { x: connector.target_x, y: connector.target_y },
+  ];
 }
 
 function makeReportGroup(label: string, layout: ChildrenLayout, memberIds: string[] = []): ReportGroup {
@@ -603,7 +429,7 @@ function PersonnelDetailsModal({
                 Additional supervisors
               </legend>
               <p className="mb-2 text-xs text-gray-500">
-                These supervisors are shown in the personnel details only. Draw dashed connectors separately with the chart pencil tool.
+                These supervisors are shown in the personnel details only. Draw any additional connectors separately with the chart pencil tool.
               </p>
               <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2">
                 {people
@@ -840,18 +666,19 @@ export default function OrganizationChart() {
   const [error, setError] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<PositionedPerson | null>(null);
   const [viewportWidth, setViewportWidth] = useState(900);
-  const [manualRouteKey, setManualRouteKey] = useState('');
-  const [draftWaypoints, setDraftWaypoints] = useState<Point[]>([]);
-  const [routeDirty, setRouteDirty] = useState(false);
+  const [freeConnectors, setFreeConnectors] = useState<FreeConnector[]>([]);
+  const [selectedConnectorId, setSelectedConnectorId] = useState('');
+  const [lineStyle, setLineStyle] = useState<ConnectorLineStyle>('solid');
   const [drawMode, setDrawMode] = useState(false);
-  const [isDrawingRoute, setIsDrawingRoute] = useState(false);
+  const [isDrawingLine, setIsDrawingLine] = useState(false);
+  const [draftLinePoints, setDraftLinePoints] = useState<Point[]>([]);
   const strokePointsRef = useRef<Point[]>([]);
-  const [routeSaving, setRouteSaving] = useState(false);
-  const [routeError, setRouteError] = useState('');
+  const [lineSaving, setLineSaving] = useState(false);
+  const [lineError, setLineError] = useState('');
   const chartViewportRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
-    const [peopleResult, placementResult, supervisorResult] = await Promise.all([
+    const [peopleResult, placementResult, supervisorResult, connectorResult] = await Promise.all([
       supabase
         .from('profiles')
         .select('id,full_name,email,position,contact_phone,avatar_url,is_focal_person,programs')
@@ -862,17 +689,22 @@ export default function OrganizationChart() {
         .select('profile_id,manager_id,chart_label,children_layout,report_groups'),
       supabase
         .from('org_chart_supervisors')
-        .select('profile_id,supervisor_id,manual_waypoints'),
+        .select('profile_id,supervisor_id'),
+      supabase
+        .from('org_chart_connectors')
+        .select('id,source_x,source_y,target_x,target_y,waypoints,line_style')
+        .order('created_at'),
     ]);
 
-    if (peopleResult.error || placementResult.error || supervisorResult.error) {
+    if (peopleResult.error || placementResult.error || supervisorResult.error || connectorResult.error) {
       const message = peopleResult.error?.message
         ?? placementResult.error?.message
         ?? supervisorResult.error?.message
+        ?? connectorResult.error?.message
         ?? 'Could not load the organization chart.';
       setError(
-        /contact_phone|is_focal_person|programs|org_chart_positions|org_chart_supervisors|manual_waypoints|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
-          ? 'The organization chart database migrations are not installed. Run the migrations in supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, supabase/org_chart_layout_preferences_migration.sql, supabase/org_chart_mixed_report_groups_migration.sql, supabase/org_chart_multiple_supervisors_migration.sql, and supabase/org_chart_manual_supervisor_routes_migration.sql in Supabase SQL Editor, then reload.'
+        /contact_phone|is_focal_person|programs|org_chart_positions|org_chart_supervisors|org_chart_connectors|line_style|chart_label|children_layout|report_groups|schema cache|does not exist/i.test(message)
+          ? 'The organization chart database migrations are not installed. Run the migrations in supabase/organizational_chart_migration.sql, supabase/focal_person_programs_migration.sql, supabase/org_chart_layout_preferences_migration.sql, supabase/org_chart_mixed_report_groups_migration.sql, supabase/org_chart_multiple_supervisors_migration.sql, supabase/org_chart_manual_supervisor_routes_migration.sql, and supabase/org_chart_free_drawing_migration.sql in Supabase SQL Editor, then reload.'
           : `Could not load the organization chart: ${message}`,
       );
     } else {
@@ -880,6 +712,7 @@ export default function OrganizationChart() {
       setPeople((peopleResult.data ?? []) as OrgPerson[]);
       setPlacements((placementResult.data ?? []) as OrgPlacement[]);
       setSecondarySupervisors((supervisorResult.data ?? []) as SecondarySupervisor[]);
+      setFreeConnectors((connectorResult.data ?? []) as FreeConnector[]);
     }
     setLoading(false);
   }, []);
@@ -899,7 +732,7 @@ export default function OrganizationChart() {
 
   useRealtimeTableChanges(
     'organization-chart',
-    ['profiles', 'org_chart_positions', 'org_chart_supervisors'],
+    ['profiles', 'org_chart_positions', 'org_chart_supervisors', 'org_chart_connectors'],
     fetchData,
     60_000,
   );
@@ -1093,12 +926,11 @@ export default function OrganizationChart() {
       rootX += root.width + HORIZONTAL_GAP;
     }
 
-    const positionedMap = new Map(positionedPeople.map((person) => [person.id, person]));
     const connectors: ChartConnector[] = connectorGroups.flatMap(({ managerId, groups }) => {
-      const manager = positionedMap.get(managerId);
+      const manager = positionedPeople.find((person) => person.id === managerId);
       const positionedGroups = groups.flatMap((group) => {
         const reports = group.reportIds
-          .map((reportId) => positionedMap.get(reportId))
+          .map((reportId) => positionedPeople.find((person) => person.id === reportId))
           .filter((report): report is PositionedPerson => report !== undefined);
         return reports.length > 0
           ? [{ layout: group.layout, x: group.x, width: group.width, reports }]
@@ -1109,31 +941,8 @@ export default function OrganizationChart() {
         : [];
     });
 
-    const matrixConnectors: MatrixConnector[] = [];
-    const matrixSettingsByKey = new Map(secondarySupervisors.map((relationship) => [
-      matrixConnectorKey(relationship.supervisor_id, relationship.profile_id),
-      relationship,
-    ]));
-    for (const report of positionedPeople) {
-      for (const supervisorId of report.additional_supervisor_ids) {
-        const supervisor = positionedMap.get(supervisorId);
-        if (!supervisor || supervisor.id === report.manager_id) continue;
-        const settings = matrixSettingsByKey.get(matrixConnectorKey(supervisor.id, report.id));
-        matrixConnectors.push({
-          supervisor,
-          report,
-          manual_waypoints: settings?.manual_waypoints ?? [],
-        });
-      }
-    }
-
-    return { positionedPeople, connectors, matrixConnectors };
+    return { positionedPeople, connectors };
   }, [people, placements, secondarySupervisors]);
-
-  const matrixConnectorPaths = useMemo(
-    () => buildMatrixConnectorPaths(layout.matrixConnectors, layout.positionedPeople),
-    [layout.matrixConnectors, layout.positionedPeople],
-  );
 
   const saveChartSettings = async (
     person: PositionedPerson,
@@ -1213,87 +1022,50 @@ export default function OrganizationChart() {
       : current);
   };
 
-  const manualConnectors = layout.matrixConnectors;
-  const connectorCanvasPadding = manualRouteKey
-    ? 240
-    : matrixConnectorPaths.length > 0
-      ? CONNECTOR_STUB_LENGTH * 2
-      : 0;
   const canvasWidth = Math.max(
     800,
     viewportWidth,
     ...layout.positionedPeople.map(
-      (person) => person.x + CARD_WIDTH + CHART_MARGIN + connectorCanvasPadding,
+      (person) => person.x + CARD_WIDTH + CHART_MARGIN + (isSuperAdmin ? 500 : 0),
+    ),
+    ...freeConnectors.flatMap((connector) =>
+      freeConnectorPoints(connector).map((point) => point.x + CHART_MARGIN),
     ),
   );
   const canvasHeight = Math.max(
     480,
     ...layout.positionedPeople.map(
-      (person) => person.y + CARD_HEIGHT + CHART_MARGIN + connectorCanvasPadding,
+      (person) => person.y + CARD_HEIGHT + CHART_MARGIN + (isSuperAdmin ? 500 : 0),
+    ),
+    ...freeConnectors.flatMap((connector) =>
+      freeConnectorPoints(connector).map((point) => point.y + CHART_MARGIN),
     ),
   );
-  const activeManualConnector = manualConnectors.find((connector) =>
-    matrixConnectorKey(connector.supervisor.id, connector.report.id) === manualRouteKey,
-  );
-  const activeManualPort = activeManualConnector
-    ? getMatrixConnectorPorts(layout.matrixConnectors).get(manualRouteKey)
-    : undefined;
-  const activeManualPreview = activeManualConnector && activeManualPort
-    ? manualConnectorPath(activeManualPort, draftWaypoints)
-    : undefined;
-  const routeRectangles: RouteRectangle[] = layout.positionedPeople.map((person) => ({
-    left: person.x - CONNECTOR_CLEARANCE,
-    right: person.x + CARD_WIDTH + CONNECTOR_CLEARANCE,
-    top: person.y - CONNECTOR_CLEARANCE,
-    bottom: person.y + CARD_HEIGHT + CONNECTOR_CLEARANCE,
-  }));
-  const activeRouteIsClear = activeManualPreview?.routedPoints.every((point, index) =>
-    index === 0 || isRouteSegmentClear(
-      activeManualPreview.routedPoints[index - 1],
-      point,
-      routeRectangles,
-    ),
-  ) ?? false;
 
   const getGridPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const scroll = chartViewportRef.current;
     return {
-      x: Math.max(0, Math.round((event.clientX - bounds.left + (scroll?.scrollLeft ?? 0)) / 8) * 8),
-      y: Math.max(0, Math.round((event.clientY - bounds.top + (scroll?.scrollTop ?? 0)) / 8) * 8),
+      x: Math.max(0, Math.round((event.clientX - bounds.left) / 8) * 8),
+      y: Math.max(0, Math.round((event.clientY - bounds.top) / 8) * 8),
     };
   };
 
   const updateStroke = (points: Point[]) => {
     strokePointsRef.current = points;
-    const simplified = simplifyStrokePoints(points);
-    let waypoints = simplified.slice(1, -1);
-    if (waypoints.length === 0 && simplified.length === 2) {
-      waypoints = [{
-        x: Math.round(((simplified[0].x + simplified[1].x) / 2) / 8) * 8,
-        y: Math.round(((simplified[0].y + simplified[1].y) / 2) / 8) * 8,
-      }];
-    }
-    setDraftWaypoints(waypoints.filter((waypoint) =>
-      !routeRectangles.some((rectangle) =>
-        waypoint.x > rectangle.left && waypoint.x < rectangle.right
-        && waypoint.y > rectangle.top && waypoint.y < rectangle.bottom,
-      ),
-    ));
+    setDraftLinePoints(orthogonalizeStrokePoints(points));
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !drawMode || !activeManualConnector || !activeManualPort) return;
+    if (event.button !== 0 || !drawMode || lineSaving) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setIsDrawingRoute(true);
-    setRouteDirty(true);
+    setIsDrawingLine(true);
     updateStroke([getGridPoint(event)]);
-    setRouteError('');
+    setLineError('');
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isDrawingRoute) return;
+    if (!isDrawingLine) return;
     const point = getGridPoint(event);
     const previous = strokePointsRef.current[strokePointsRef.current.length - 1];
     if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 8) return;
@@ -1301,46 +1073,71 @@ export default function OrganizationChart() {
   };
 
   const finishStroke = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isDrawingRoute) return;
+    if (!isDrawingLine) return;
     const point = getGridPoint(event);
     const points = strokePointsRef.current;
     const last = points[points.length - 1];
     const completed = last && last.x === point.x && last.y === point.y
       ? points
       : [...points, point];
-    if (completed.length < 2) {
-      strokePointsRef.current = [];
-      setDraftWaypoints(activeManualConnector?.manual_waypoints ?? []);
-      setRouteDirty(false);
-      setIsDrawingRoute(false);
+    updateStroke(completed);
+    setIsDrawingLine(false);
+    strokePointsRef.current = [];
+    const orthogonalPoints = orthogonalizeStrokePoints(completed);
+    if (orthogonalPoints.length < 2) {
+      setDraftLinePoints([]);
       return;
     }
-    updateStroke(completed);
-    setIsDrawingRoute(false);
+    void saveFreeConnector(orthogonalPoints);
   };
 
-  const saveManualRoute = async () => {
-    if (!activeManualConnector || !routeDirty || draftWaypoints.length > 100
-      || (draftWaypoints.length > 0 && !activeRouteIsClear)) return;
-    setRouteSaving(true);
-    setRouteError('');
+  const saveFreeConnector = async (points: Point[]) => {
+    if (!isSuperAdmin || points.length < 2) return;
+    if (points.length > 502) {
+      setLineError('This line has too many bends. Draw it with fewer turns.');
+      return;
+    }
+    setLineSaving(true);
+    setLineError('');
     try {
-      const { error: saveError } = await supabase.rpc('save_org_chart_supervisor_route', {
-        p_profile_id: activeManualConnector.report.id,
-        p_supervisor_id: activeManualConnector.supervisor.id,
-        p_manual_waypoints: draftWaypoints,
+      const { error: saveError } = await supabase.from('org_chart_connectors').insert({
+        source_profile_id: null,
+        source_side: 'top',
+        source_x: points[0].x,
+        source_y: points[0].y,
+        target_profile_id: null,
+        target_side: 'top',
+        target_x: points[points.length - 1].x,
+        target_y: points[points.length - 1].y,
+        waypoints: points.slice(1, -1),
+        line_style: lineStyle,
       });
       if (saveError) throw new Error(saveError.message);
       await fetchData();
-      setManualRouteKey('');
-      setDraftWaypoints([]);
-      setRouteDirty(false);
-      strokePointsRef.current = [];
-      setDrawMode(false);
+      setDraftLinePoints([]);
     } catch (saveError) {
-      setRouteError(saveError instanceof Error ? saveError.message : 'Could not save this route.');
+      setLineError(saveError instanceof Error ? saveError.message : 'Could not save this line.');
     } finally {
-      setRouteSaving(false);
+      setLineSaving(false);
+    }
+  };
+
+  const deleteSelectedConnector = async () => {
+    if (!selectedConnectorId || !isSuperAdmin || lineSaving) return;
+    setLineSaving(true);
+    setLineError('');
+    try {
+      const { error: deleteError } = await supabase
+        .from('org_chart_connectors')
+        .delete()
+        .eq('id', selectedConnectorId);
+      if (deleteError) throw new Error(deleteError.message);
+      setFreeConnectors((current) => current.filter(({ id }) => id !== selectedConnectorId));
+      setSelectedConnectorId('');
+    } catch (deleteError) {
+      setLineError(deleteError instanceof Error ? deleteError.message : 'Could not delete this line.');
+    } finally {
+      setLineSaving(false);
     }
   };
 
@@ -1353,30 +1150,71 @@ export default function OrganizationChart() {
             <Network size={21} className="text-blue-700" /> Organizational Chart
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Solid lines show primary reporting. Additional supervisors are listed in personnel details; dashed lines are drawn manually by a Super Admin.
+            Blue lines show primary reporting. Additional supervisors are listed in personnel details; Super Admins can draw independent solid or dashed lines.
           </p>
           </div>
-          {isSuperAdmin && manualConnectors.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setDrawMode((current) => !current);
-                setIsDrawingRoute(false);
-                strokePointsRef.current = [];
-                setRouteError('');
-              }}
-              disabled={!manualRouteKey || routeSaving}
-              aria-label={drawMode ? 'Stop drawing dashed connector' : 'Draw dashed connector'}
-              aria-pressed={drawMode}
-              title={drawMode ? 'Stop drawing' : 'Draw a dashed connector'}
-              className={`shrink-0 rounded-lg border p-2 ${
-                drawMode
-                  ? 'border-violet-700 bg-violet-700 text-white'
-                  : 'border-violet-200 bg-white text-violet-800 hover:bg-violet-50'
-              } disabled:cursor-not-allowed disabled:opacity-50`}
-            >
-              <Pencil size={18} />
-            </button>
+          {isSuperAdmin && (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLineStyle('solid')}
+                aria-pressed={lineStyle === 'solid'}
+                title="Choose solid line"
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                  lineStyle === 'solid'
+                    ? 'border-blue-700 bg-blue-700 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Solid
+              </button>
+              <button
+                type="button"
+                onClick={() => setLineStyle('dashed')}
+                aria-pressed={lineStyle === 'dashed'}
+                title="Choose dashed line"
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                  lineStyle === 'dashed'
+                    ? 'border-violet-700 bg-violet-700 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Dashed
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawMode((current) => !current);
+                  setIsDrawingLine(false);
+                  setDraftLinePoints([]);
+                  strokePointsRef.current = [];
+                  setLineError('');
+                }}
+                disabled={lineSaving}
+                aria-label={drawMode ? 'Stop drawing lines' : 'Draw a line'}
+                aria-pressed={drawMode}
+                title={drawMode ? 'Stop drawing' : 'Draw a line'}
+                className={`rounded-lg border p-2 ${
+                  drawMode
+                    ? 'border-gray-800 bg-gray-800 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <Pencil size={18} />
+              </button>
+              {selectedConnectorId && (
+                <button
+                  type="button"
+                  onClick={() => void deleteSelectedConnector()}
+                  disabled={lineSaving}
+                  aria-label="Delete selected line"
+                  title="Delete selected line"
+                  className="rounded-lg border border-red-200 bg-white p-2 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 size={18} />
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -1386,106 +1224,15 @@ export default function OrganizationChart() {
           </div>
         )}
 
-        {isSuperAdmin && manualConnectors.length > 0 && (
-          <div className="mb-4 space-y-2 rounded-lg border border-violet-200 bg-violet-50 p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="org-chart-manual-route" className="text-sm font-semibold text-gray-800">
-                Additional supervisor line
-              </label>
-              <select
-                id="org-chart-manual-route"
-                value={manualRouteKey}
-                onChange={(event) => {
-                  const key = event.target.value;
-                  const connector = manualConnectors.find((item) =>
-                    matrixConnectorKey(item.supervisor.id, item.report.id) === key,
-                  );
-                  setManualRouteKey(key);
-                  setDraftWaypoints(connector?.manual_waypoints ?? []);
-                  setRouteDirty(false);
-                  setIsDrawingRoute(false);
-                  setDrawMode(false);
-                  strokePointsRef.current = [];
-                  setRouteError('');
-                }}
-                className="min-w-[220px] flex-1 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm"
-              >
-                <option value="">Choose a supervisor and report</option>
-                {manualConnectors.map((connector) => (
-                  <option
-                    key={matrixConnectorKey(connector.supervisor.id, connector.report.id)}
-                    value={matrixConnectorKey(connector.supervisor.id, connector.report.id)}
-                  >
-                    {toProfileTitleCase(connector.supervisor.full_name) || 'Staff Member'}
-                    {' → '}
-                    {toProfileTitleCase(connector.report.full_name) || 'Staff Member'}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  setDraftWaypoints([]);
-                  strokePointsRef.current = [];
-                  setRouteDirty(true);
-                  setDrawMode(false);
-                  setIsDrawingRoute(false);
-                  setRouteError('');
-                }}
-                disabled={!manualRouteKey || routeSaving
-                  || (!draftWaypoints.length && !activeManualConnector?.manual_waypoints?.length)}
-                className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-800 disabled:opacity-50"
-              >
-                Clear line
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveManualRoute()}
-                disabled={!activeManualConnector || !routeDirty || draftWaypoints.length > 100
-                  || (draftWaypoints.length > 0 && !activeRouteIsClear) || routeSaving}
-                className="flex items-center gap-1 rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50"
-              >
-                <Check size={15} /> {routeSaving ? 'Saving…' : 'Save line'}
-              </button>
-              {manualRouteKey && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManualRouteKey('');
-                    setDraftWaypoints([]);
-                    setRouteDirty(false);
-                    setDrawMode(false);
-                    setIsDrawingRoute(false);
-                    strokePointsRef.current = [];
-                    setRouteError('');
-                  }}
-                  disabled={routeSaving}
-                  className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-white"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-            {manualRouteKey && (
-              <p className="text-xs text-gray-600">
-                {drawMode
-                  ? 'Drag the pencil from the supervisor toward the personnel card. The stroke snaps to the grid and stays horizontal/vertical.'
-                  : 'Choose a relationship, then use the pencil button at the top-right to sketch its dashed connector.'}
-                {drawMode && !activeRouteIsClear && (
-                  <span className="ml-1 font-semibold text-red-700">
-                    This line crosses a personnel card; redraw it to save.
-                  </span>
-                )}
-                {draftWaypoints.length > 100 && (
-                  <span className="ml-1 font-semibold text-red-700">
-                    The line has too many bends; redraw it with a simpler stroke.
-                  </span>
-                )}
-              </p>
-            )}
-            {routeError && (
-              <p role="alert" className="text-sm text-red-700">{routeError}</p>
-            )}
+        {isSuperAdmin && (
+          <div className="mb-4 space-y-1">
+            <p className="text-xs text-gray-600">
+              {drawMode
+                ? `Drag on the chart to draw a ${lineStyle} line. It snaps to the grid and stays horizontal/vertical; each completed line saves automatically.`
+                : 'Choose a line style, select the pencil, then draw anywhere on the chart.'}
+            </p>
+            {lineSaving && <p className="text-xs text-gray-500">Saving line…</p>}
+            {lineError && <p role="alert" className="text-sm text-red-700">{lineError}</p>}
           </div>
         )}
 
@@ -1521,8 +1268,7 @@ export default function OrganizationChart() {
               }}
             >
               <svg
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0"
+                className="absolute inset-0"
                 width={canvasWidth}
                 height={canvasHeight}
                 viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
@@ -1563,28 +1309,42 @@ export default function OrganizationChart() {
                       fill="none"
                       stroke="#60a5fa"
                       strokeWidth="2"
+                      pointerEvents="none"
                     />
                   );
                 })}
-                {matrixConnectorPaths
-                  .filter(({ key }) => key !== manualRouteKey || !routeDirty)
-                  .map(({ key, path }) => (
+                {freeConnectors.map((connector) => (
                   <path
-                    key={key}
-                    d={path}
+                    key={connector.id}
+                    d={routePathFromPoints(freeConnectorPoints(connector))}
                     fill="none"
-                    stroke="#8b5cf6"
-                    strokeWidth="2"
-                    strokeDasharray="6 4"
+                    stroke={selectedConnectorId === connector.id
+                      ? '#dc2626'
+                      : connector.line_style === 'dashed' ? '#8b5cf6' : '#334155'}
+                    strokeWidth={selectedConnectorId === connector.id ? '4' : '3'}
+                    strokeDasharray={connector.line_style === 'dashed' ? '8 6' : undefined}
+                    pointerEvents={drawMode ? 'none' : 'stroke'}
+                    role="button"
+                    tabIndex={drawMode ? -1 : 0}
+                    aria-label={`Select ${connector.line_style} line to delete`}
+                    onClick={() => setSelectedConnectorId(connector.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedConnectorId(connector.id);
+                      }
+                    }}
+                    className={drawMode ? '' : 'cursor-pointer'}
                   />
                 ))}
-                {drawMode && draftWaypoints.length > 0 && activeManualPreview && (
+                {draftLinePoints.length > 1 && (
                   <path
-                    d={activeManualPreview.path}
+                    d={routePathFromPoints(draftLinePoints)}
                     fill="none"
-                    stroke={activeRouteIsClear ? '#7c3aed' : '#dc2626'}
+                    stroke={lineStyle === 'dashed' ? '#8b5cf6' : '#334155'}
                     strokeWidth="3"
-                    strokeDasharray="6 4"
+                    strokeDasharray={lineStyle === 'dashed' ? '8 6' : undefined}
+                    pointerEvents="none"
                   />
                 )}
               </svg>
@@ -1640,10 +1400,10 @@ export default function OrganizationChart() {
           }
         />
       )}
-      {layout.matrixConnectors.length > 0 && (
+      {freeConnectors.length > 0 && (
         <p className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-          <span aria-hidden="true" className="w-6 border-t-2 border-dashed border-violet-500" />
-          Dashed lines are manually drawn additional supervisor connectors.
+          <span aria-hidden="true" className="w-6 border-t-2 border-gray-600" />
+          Manually drawn organizational chart lines.
         </p>
       )}
     </>

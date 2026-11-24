@@ -144,11 +144,15 @@ matrix reporting. Each person keeps one primary supervisor for chart placement
 and may have additional supervisors, listed in the personnel details.
 
 Run `supabase/org_chart_manual_supervisor_routes_migration.sql` after the
-multiple-supervisors migration and before deploying manual matrix routes.
-Super Admins can draw dashed connectors for additional supervisor relationships
-by selecting a supervisor/report pair, enabling the pencil tool, and dragging
-the route on the chart grid. Routes snap to the grid and stay horizontal and
-vertical; selecting an additional supervisor alone does not draw a line.
+multiple-supervisors migration to install the organization-chart settings
+function used when editing supervisor relationships.
+
+Run `supabase/org_chart_free_drawing_migration.sql` after the organizational
+chart migration and before deploying free-drawn connectors. Super Admins can
+choose solid or dashed line styles, then draw independent connectors anywhere
+on the chart with the pencil tool. Lines snap to the grid and use only
+horizontal and vertical segments. Additional supervisors remain informational
+and do not create or alter connectors.
 
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
