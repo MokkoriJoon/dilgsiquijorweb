@@ -144,6 +144,12 @@ matrix reporting. Each person keeps one primary supervisor for chart placement
 and may have additional supervisors, shown as dashed connectors to the same
 personnel card.
 
+Run `supabase/org_chart_manual_supervisor_routes_migration.sql` after the
+multiple-supervisors migration and before deploying manual matrix routes.
+Super Admins can choose automatic or manual dashed connectors per personnel
+card. Automatic routes avoid solid reporting lines; manual routes can be drawn
+on the chart grid and saved for that supervisor relationship.
+
 Supabase reference: [Auth email confirmation](https://supabase.com/docs/guides/auth/auth-email-password#email-confirmation)
 and [Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits).
 
