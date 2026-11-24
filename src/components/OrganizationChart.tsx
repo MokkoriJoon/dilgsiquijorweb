@@ -95,6 +95,24 @@ interface MatrixConnectorPath {
   path: string;
 }
 
+interface RouteRectangle {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+interface RouteQueueEntry {
+  node: number;
+  cost: number;
+  priority: number;
+}
+
+interface RouteNeighbor {
+  node: number;
+  cost: number;
+}
+
 const CARD_WIDTH = 230;
 const CARD_HEIGHT = 72;
 const HORIZONTAL_GAP = 64;
@@ -102,14 +120,22 @@ const VERTICAL_GAP = 104;
 const CHART_MARGIN = 32;
 const CONNECTOR_PORT_PADDING = 12;
 const CONNECTOR_STUB_LENGTH = 18;
+const CONNECTOR_CLEARANCE = 12;
 
-function nearestCardSide(card: PositionedPerson, other: PositionedPerson): CardSide {
-  const deltaX = other.x + CARD_WIDTH / 2 - (card.x + CARD_WIDTH / 2);
-  const deltaY = other.y + CARD_HEIGHT / 2 - (card.y + CARD_HEIGHT / 2);
+function nearestCardSideToPoint(card: PositionedPerson, other: Point): CardSide {
+  const deltaX = other.x - (card.x + CARD_WIDTH / 2);
+  const deltaY = other.y - (card.y + CARD_HEIGHT / 2);
   if (Math.abs(deltaX) / CARD_WIDTH >= Math.abs(deltaY) / CARD_HEIGHT) {
     return deltaX >= 0 ? 'right' : 'left';
   }
   return deltaY >= 0 ? 'bottom' : 'top';
+}
+
+function nearestCardSide(card: PositionedPerson, other: PositionedPerson): CardSide {
+  return nearestCardSideToPoint(card, {
+    x: other.x + CARD_WIDTH / 2,
+    y: other.y + CARD_HEIGHT / 2,
+  });
 }
 
 function cardEdgePort(
@@ -140,40 +166,165 @@ function offsetFromCard(point: Point, side: CardSide): Point {
   return { ...point, y: point.y + CONNECTOR_STUB_LENGTH };
 }
 
-function buildMatrixConnectorPaths(connectors: MatrixConnector[]): MatrixConnectorPath[] {
+function pushRouteQueue(queue: RouteQueueEntry[], entry: RouteQueueEntry) {
+  let index = queue.length;
+  queue.push(entry);
+  while (index > 0) {
+    const parentIndex = Math.floor((index - 1) / 2);
+    if (queue[parentIndex].priority <= entry.priority) break;
+    queue[index] = queue[parentIndex];
+    index = parentIndex;
+  }
+  queue[index] = entry;
+}
+
+function popRouteQueue(queue: RouteQueueEntry[]): RouteQueueEntry | undefined {
+  const first = queue[0];
+  const last = queue.pop();
+  if (!first || !last || queue.length === 0) return first;
+  let index = 0;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    if (left >= queue.length) break;
+    const child = right < queue.length && queue[right].priority < queue[left].priority
+      ? right
+      : left;
+    if (queue[child].priority >= last.priority) break;
+    queue[index] = queue[child];
+    index = child;
+  }
+  queue[index] = last;
+  return first;
+}
+
+function isInsideRouteRectangle(point: Point, rectangles: RouteRectangle[]): boolean {
+  return rectangles.some((rectangle) =>
+    point.x > rectangle.left && point.x < rectangle.right
+    && point.y > rectangle.top && point.y < rectangle.bottom,
+  );
+}
+
+function isRouteSegmentClear(
+  from: Point,
+  to: Point,
+  rectangles: RouteRectangle[],
+): boolean {
+  return rectangles.every((rectangle) => {
+    if (from.y === to.y) {
+      return !(from.y > rectangle.top && from.y < rectangle.bottom
+        && Math.max(from.x, to.x) > rectangle.left
+        && Math.min(from.x, to.x) < rectangle.right);
+    }
+    return !(from.x > rectangle.left && from.x < rectangle.right
+      && Math.max(from.y, to.y) > rectangle.top
+      && Math.min(from.y, to.y) < rectangle.bottom);
+  });
+}
+
+function findRouteToTree(
+  startNode: number,
+  treeNodes: Set<number>,
+  xCoordinates: number[],
+  yCoordinates: number[],
+  rectangles: RouteRectangle[],
+  neighborCache: Map<number, RouteNeighbor[]>,
+): number[] | null {
+  const width = xCoordinates.length;
+  const nodePoint = (node: number): Point => ({
+    x: xCoordinates[node % width],
+    y: yCoordinates[Math.floor(node / width)],
+  });
+  const targetPoint = nodePoint(startNode);
+  const distances = new Map<number, number>();
+  const previous = new Map<number, number>();
+  const queue: RouteQueueEntry[] = [];
+
+  for (const treeNode of treeNodes) {
+    const point = nodePoint(treeNode);
+    const cost = Math.abs(point.x - targetPoint.x) + Math.abs(point.y - targetPoint.y);
+    distances.set(treeNode, 0);
+    pushRouteQueue(queue, { node: treeNode, cost: 0, priority: cost });
+  }
+
+  while (queue.length > 0) {
+    const current = popRouteQueue(queue);
+    if (!current || current.cost !== distances.get(current.node)) continue;
+    if (current.node === startNode) {
+      const path = [startNode];
+      let node = startNode;
+      while (previous.has(node)) {
+        node = previous.get(node)!;
+        path.push(node);
+      }
+      return path;
+    }
+
+    let neighbors = neighborCache.get(current.node);
+    if (!neighbors) {
+      const xIndex = current.node % width;
+      const yIndex = Math.floor(current.node / width);
+      const point = nodePoint(current.node);
+      const candidates = [
+        xIndex > 0 ? current.node - 1 : -1,
+        xIndex + 1 < xCoordinates.length ? current.node + 1 : -1,
+        yIndex > 0 ? current.node - width : -1,
+        yIndex + 1 < yCoordinates.length ? current.node + width : -1,
+      ];
+      neighbors = candidates.flatMap((neighbor): RouteNeighbor[] => {
+        if (neighbor < 0) return [];
+        const neighborPoint = nodePoint(neighbor);
+        if (isInsideRouteRectangle(neighborPoint, rectangles)
+          || !isRouteSegmentClear(point, neighborPoint, rectangles)) return [];
+        return [{
+          node: neighbor,
+          cost: Math.abs(neighborPoint.x - point.x)
+            + Math.abs(neighborPoint.y - point.y),
+        }];
+      });
+      neighborCache.set(current.node, neighbors);
+    }
+
+    for (const { node: neighbor, cost } of neighbors) {
+      const neighborPoint = nodePoint(neighbor);
+      const nextCost = current.cost + cost;
+      if (nextCost >= (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) continue;
+      distances.set(neighbor, nextCost);
+      previous.set(neighbor, current.node);
+      const heuristic = Math.abs(neighborPoint.x - targetPoint.x)
+        + Math.abs(neighborPoint.y - targetPoint.y);
+      pushRouteQueue(queue, {
+        node: neighbor,
+        cost: nextCost,
+        priority: nextCost + heuristic,
+      });
+    }
+  }
+  return null;
+}
+
+function buildMatrixConnectorPaths(
+  connectors: MatrixConnector[],
+  people: PositionedPerson[],
+): MatrixConnectorPath[] {
+  if (connectors.length === 0) return [];
   const details = connectors.map((connector) => ({
     ...connector,
     key: `${connector.supervisor.id}-${connector.report.id}`,
-    sourceSide: nearestCardSide(connector.supervisor, connector.report),
     targetSide: nearestCardSide(connector.report, connector.supervisor),
   }));
-  const sourceGroups = new Map<string, typeof details>();
   const targetGroups = new Map<string, typeof details>();
+  const supervisors = new Map<string, typeof details>();
 
   for (const connector of details) {
-    const sourceKey = `${connector.supervisor.id}:${connector.sourceSide}`;
-    const sourceGroup = sourceGroups.get(sourceKey) ?? [];
-    sourceGroup.push(connector);
-    sourceGroups.set(sourceKey, sourceGroup);
-
     const targetKey = `${connector.report.id}:${connector.targetSide}`;
     const targetGroup = targetGroups.get(targetKey) ?? [];
     targetGroup.push(connector);
     targetGroups.set(targetKey, targetGroup);
-  }
 
-  const sourcePorts = new Map<string, { point: Point; side: CardSide }>();
-  for (const group of sourceGroups.values()) {
-    const side = group[0].sourceSide;
-    group.sort((a, b) => side === 'left' || side === 'right'
-      ? a.report.y - b.report.y
-      : a.report.x - b.report.x);
-    group.forEach((connector, index) => {
-      sourcePorts.set(connector.key, {
-        point: cardEdgePort(connector.supervisor, side, index, group.length),
-        side,
-      });
-    });
+    const supervisorGroup = supervisors.get(connector.supervisor.id) ?? [];
+    supervisorGroup.push(connector);
+    supervisors.set(connector.supervisor.id, supervisorGroup);
   }
 
   const targetPorts = new Map<string, { point: Point; side: CardSide }>();
@@ -190,25 +341,168 @@ function buildMatrixConnectorPaths(connectors: MatrixConnector[]): MatrixConnect
     });
   }
 
-  return details.map((connector) => {
-    const source = sourcePorts.get(connector.key);
-    const target = targetPorts.get(connector.key);
-    if (!source || !target) return { key: connector.key, path: '' };
-    const sourceStub = offsetFromCard(source.point, source.side);
-    const targetStub = offsetFromCard(target.point, target.side);
-    const midX = (sourceStub.x + targetStub.x) / 2;
-    const d = [
-      `M ${source.point.x} ${source.point.y}`,
-      source.side === 'left' || source.side === 'right'
-        ? `H ${sourceStub.x}`
-        : `V ${sourceStub.y}`,
-      `H ${midX} V ${targetStub.y} H ${targetStub.x}`,
-      target.side === 'left' || target.side === 'right'
-        ? `H ${target.point.x}`
-        : `V ${target.point.y}`,
-    ].join(' ');
-    return { key: connector.key, path: d };
+  const rectangles: RouteRectangle[] = people.map((person) => ({
+    left: person.x - CONNECTOR_CLEARANCE,
+    right: person.x + CARD_WIDTH + CONNECTOR_CLEARANCE,
+    top: person.y - CONNECTOR_CLEARANCE,
+    bottom: person.y + CARD_HEIGHT + CONNECTOR_CLEARANCE,
+  }));
+  const xSet = new Set<number>();
+  const ySet = new Set<number>();
+  const addPoint = (point: Point) => {
+    xSet.add(point.x);
+    ySet.add(point.y);
+  };
+  for (const rectangle of rectangles) {
+    xSet.add(rectangle.left);
+    xSet.add(rectangle.right);
+    ySet.add(rectangle.top);
+    ySet.add(rectangle.bottom);
+  }
+
+  const ports = new Map<string, {
+    supervisorSide: CardSide;
+    supervisorPoint: Point;
+    reportSide: CardSide;
+    reportPoint: Point;
+  }>();
+  for (const group of supervisors.values()) {
+    const supervisor = group[0].supervisor;
+    const center = group.reduce((sum, connector) => ({
+      x: sum.x + connector.report.x + CARD_WIDTH / 2,
+      y: sum.y + connector.report.y + CARD_HEIGHT / 2,
+    }), { x: 0, y: 0 });
+    const destination = {
+      x: center.x / group.length,
+      y: center.y / group.length,
+    };
+    const supervisorSide = nearestCardSideToPoint(supervisor, destination);
+    const supervisorPoint = cardEdgePort(supervisor, supervisorSide, 0, 1);
+    addPoint(supervisorPoint);
+    addPoint(offsetFromCard(supervisorPoint, supervisorSide));
+    for (const connector of group) {
+      const reportPort = targetPorts.get(connector.key);
+      if (!reportPort) continue;
+      ports.set(connector.key, {
+        supervisorSide,
+        supervisorPoint,
+        reportSide: reportPort.side,
+        reportPoint: reportPort.point,
+      });
+      addPoint(offsetFromCard(reportPort.point, reportPort.side));
+      addPoint(reportPort.point);
+    }
+  }
+
+  const minX = Math.min(...xSet);
+  const maxX = Math.max(...xSet);
+  const minY = Math.min(...ySet);
+  const maxY = Math.max(...ySet);
+  xSet.add(Math.max(0, minX - CONNECTOR_STUB_LENGTH * 2));
+  xSet.add(maxX + CONNECTOR_STUB_LENGTH * 2);
+  ySet.add(Math.max(0, minY - CONNECTOR_STUB_LENGTH * 2));
+  ySet.add(maxY + CONNECTOR_STUB_LENGTH * 2);
+  const xCoordinates = [...xSet].sort((a, b) => a - b);
+  const yCoordinates = [...ySet].sort((a, b) => a - b);
+  const xIndexByValue = new Map(xCoordinates.map((value, index) => [value, index]));
+  const yIndexByValue = new Map(yCoordinates.map((value, index) => [value, index]));
+  const toNode = (point: Point) =>
+    yIndexByValue.get(point.y)! * xCoordinates.length + xIndexByValue.get(point.x)!;
+  const pointFor = (node: number): Point => ({
+    x: xCoordinates[node % xCoordinates.length],
+    y: yCoordinates[Math.floor(node / xCoordinates.length)],
   });
+  const results: MatrixConnectorPath[] = [];
+  const neighborCache = new Map<number, RouteNeighbor[]>();
+
+  for (const [supervisorId, group] of supervisors) {
+    const { supervisorSide, supervisorPoint } = ports.get(group[0].key)!;
+    const sourceStub = offsetFromCard(supervisorPoint, supervisorSide);
+    const edges = new Map<number, Set<number>>();
+    const addEdge = (from: number, to: number) => {
+      const fromEdges = edges.get(from) ?? new Set<number>();
+      const toEdges = edges.get(to) ?? new Set<number>();
+      fromEdges.add(to);
+      toEdges.add(from);
+      edges.set(from, fromEdges);
+      edges.set(to, toEdges);
+    };
+
+    const sourceAnchorNode = toNode(supervisorPoint);
+    const sourceStubNode = toNode(sourceStub);
+    addEdge(sourceAnchorNode, sourceStubNode);
+    const treeNodes = new Set([sourceStubNode]);
+    const sortedGroup = [...group].sort((a, b) =>
+      a.report.x - b.report.x || a.report.y - b.report.y,
+    );
+    for (const connector of sortedGroup) {
+      const port = ports.get(connector.key);
+      if (!port) continue;
+      const targetStub = offsetFromCard(port.reportPoint, port.reportSide);
+      const targetStubNode = toNode(targetStub);
+      const path = findRouteToTree(
+        targetStubNode,
+        treeNodes,
+        xCoordinates,
+        yCoordinates,
+        rectangles,
+        neighborCache,
+      );
+      if (!path) continue;
+      for (let index = 0; index < path.length - 1; index += 1) {
+        addEdge(path[index], path[index + 1]);
+        treeNodes.add(path[index]);
+      }
+      treeNodes.add(targetStubNode);
+      addEdge(targetStubNode, toNode(port.reportPoint));
+    }
+
+    const visited = new Set<string>();
+    const canonicalEdge = (left: number, right: number) =>
+      left < right ? `${left}:${right}` : `${right}:${left}`;
+    const pathParts: string[] = [];
+    const trace = (start: number, next: number) => {
+      const points = [start];
+      let previous = start;
+      let current = next;
+      visited.add(canonicalEdge(previous, current));
+      points.push(current);
+      while ((edges.get(current)?.size ?? 0) === 2) {
+        const following = [...(edges.get(current) ?? [])].find((node) => node !== previous);
+        if (following === undefined) break;
+        const edge = canonicalEdge(current, following);
+        if (visited.has(edge)) break;
+        visited.add(edge);
+        previous = current;
+        current = following;
+        points.push(current);
+      }
+      const firstPoint = pointFor(points[0]);
+      const commands = [`M ${firstPoint.x} ${firstPoint.y}`];
+      for (let index = 1; index < points.length; index += 1) {
+        const point = pointFor(points[index]);
+        commands.push(point.x === pointFor(points[index - 1]).x
+          ? `V ${point.y}`
+          : `H ${point.x}`);
+      }
+      pathParts.push(commands.join(' '));
+    };
+
+    for (const [node, neighbors] of edges) {
+      if (neighbors.size === 2) continue;
+      for (const neighbor of neighbors) {
+        if (!visited.has(canonicalEdge(node, neighbor))) trace(node, neighbor);
+      }
+    }
+    for (const [node, neighbors] of edges) {
+      for (const neighbor of neighbors) {
+        if (!visited.has(canonicalEdge(node, neighbor))) trace(node, neighbor);
+      }
+    }
+    results.push({ key: supervisorId, path: pathParts.join(' ') });
+  }
+
+  return results;
 }
 
 function makeReportGroup(label: string, layout: ChildrenLayout, memberIds: string[] = []): ReportGroup {
@@ -952,8 +1246,8 @@ export default function OrganizationChart() {
   }, [people, placements, secondarySupervisors]);
 
   const matrixConnectorPaths = useMemo(
-    () => buildMatrixConnectorPaths(layout.matrixConnectors),
-    [layout.matrixConnectors],
+    () => buildMatrixConnectorPaths(layout.matrixConnectors, layout.positionedPeople),
+    [layout.matrixConnectors, layout.positionedPeople],
   );
 
   const saveChartSettings = async (
@@ -1036,11 +1330,17 @@ export default function OrganizationChart() {
   const canvasWidth = Math.max(
     800,
     viewportWidth,
-    ...layout.positionedPeople.map((person) => person.x + CARD_WIDTH + CHART_MARGIN),
+    ...layout.positionedPeople.map(
+      (person) => person.x + CARD_WIDTH + CHART_MARGIN
+        + (matrixConnectorPaths.length > 0 ? CONNECTOR_STUB_LENGTH * 2 : 0),
+    ),
   );
   const canvasHeight = Math.max(
     480,
-    ...layout.positionedPeople.map((person) => person.y + CARD_HEIGHT + CHART_MARGIN),
+    ...layout.positionedPeople.map(
+      (person) => person.y + CARD_HEIGHT + CHART_MARGIN
+        + (matrixConnectorPaths.length > 0 ? CONNECTOR_STUB_LENGTH * 2 : 0),
+    ),
   );
 
   return (
